@@ -290,9 +290,11 @@ Kenneth's ask: Nova should ask who to generate for and which platforms, instead 
 
 ---
 
-## 14. V2 — Meta Graph API publish + schedule (COMPLETE 2026-07-05)
+## 14. V2 — Meta Graph API publish + schedule (COMPLETE 2026-07-05, verified live)
 
 Approved Facebook drafts can be published immediately or scheduled to the brand's Facebook Page directly via the Meta Graph API. No MCP plugin — direct Graph calls. Instagram + LinkedIn are deferred (V2.1).
+
+**Verified live 2026-07-05:** content item 13 (approved BICCU facebook draft) scheduled via `POST /publish` with `scheduled_for` 25 min out. Meta returned post id `120368170965_1702865025176333`; confirmed present in the page's `scheduled_posts` edge with the correct message + `scheduled_publish_time`. DB updated to `status='scheduled'`, `meta_post_id` + `scheduled_for` populated. `/meta/verify` returns `{"page_name": "Bahama Islands Co-operative Credit Union Limited"}`.
 
 ### Endpoints (new)
 
@@ -360,3 +362,12 @@ The Pipeboard Meta Ads MCP connection is scoped to `ads_management` only — it 
    railway variables | grep DATABASE_URL   # gotcha: env edits can wipe the reference var
    ```
 7. Verify: `curl -H "X-Cron-Secret: massive-music-tech-issues" https://nova-production-14f6.up.railway.app/meta/verify` should return `{"ok": true, "page_name": "Bahama Islands Co-operative Credit Union Limited"}`.
+
+### Token lifecycle note (2026-07-05)
+
+The current `META_PAGE_ACCESS_TOKEN` on Railway is **short-lived (~1 hour)** — it was generated from a short-lived user token without the `fb_exchange_token` exchange. Re-generate before it expires (or for permanent use):
+1. In Graph API Explorer, run `GET /oauth/access_token?grant_type=fb_exchange_token&client_id={APP_ID}&client_secret={APP_SECRET}&fb_exchange_token={CURRENT_SHORT_USER_TOKEN}` to get a 60-day user token.
+2. Re-run `120368170965?fields=name,access_token` with the long-lived user token in the Explorer's token field. The returned page `access_token` is now long-lived (effectively permanent).
+3. `railway variables set 'META_PAGE_ACCESS_TOKEN=<new-long-lived-token>'` and verify `DATABASE_URL` survives.
+
+The app used is "Nova-Agent" (app id `27311849091810327`), token type PAGE, scopes `pages_show_list` + `pages_read_engagement` + `pages_manage_posts`.
