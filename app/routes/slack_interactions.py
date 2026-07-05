@@ -6,10 +6,11 @@ import time
 from urllib.parse import parse_qs
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from core import db, generation_flow, onboarding
 from core.db import update_status
-from core.slack_client import post_message
+from core.slack_client import format_resolved_approval_blocks, post_message
 
 router = APIRouter()
 
@@ -73,8 +74,19 @@ async def handle_interaction(request: Request, background_tasks: BackgroundTasks
             item_id = int(value.split("_", 1)[1])
         except (IndexError, ValueError):
             raise HTTPException(status_code=400, detail="Bad action value")
-        update_status(item_id, "approved" if action_id == "approve" else "rejected")
-        return {"ok": True}
+        status = "approved" if action_id == "approve" else "rejected"
+        update_status(item_id, status)
+        user_id = (payload.get("user") or {}).get("id")
+        updated_blocks = format_resolved_approval_blocks(
+            message.get("blocks"), status, user_id
+        )
+        return JSONResponse(
+            content={
+                "replace_original": True,
+                "blocks": updated_blocks,
+                "text": message.get("text") or f"Draft {status}",
+            }
+        )
 
     # --- Onboarding actions (defer slow work to background) ---
     if action_id in ("onboard_approve", "onboard_reject", "onboard_regenerate"):

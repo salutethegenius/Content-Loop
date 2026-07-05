@@ -5,6 +5,26 @@ import requests
 SLACK_POST_URL = "https://slack.com/api/chat.postMessage"
 
 
+def format_resolved_approval_blocks(original_blocks, status, user_id=None):
+    """Replace Approve/Reject buttons with a status line on the draft message."""
+    blocks = [b for b in (original_blocks or []) if b.get("type") != "actions"]
+    label = "Approved" if status == "approved" else "Rejected"
+    emoji = ":white_check_mark:" if status == "approved" else ":x:"
+    if user_id:
+        status_text = f"{emoji} *{label}* by <@{user_id}>"
+    else:
+        status_text = f"{emoji} *{label}*"
+    if status == "approved":
+        status_text += " — ready for manual posting."
+    blocks.append(
+        {
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": status_text}],
+        }
+    )
+    return blocks
+
+
 def post_for_approval(item_id, brand_name, platform, draft_text):
     """Post a draft to Slack with Approve/Reject buttons. Returns the message ts."""
     bot_token = os.environ["SLACK_BOT_TOKEN"]
