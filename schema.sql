@@ -50,3 +50,7 @@ CREATE TABLE IF NOT EXISTS onboarding_sessions (
 
 CREATE INDEX IF NOT EXISTS onboarding_sessions_thread_ts_idx
     ON onboarding_sessions (thread_ts);
+
+-- V2: Meta Graph API publishing
+ALTER TABLE content_items ADD COLUMN IF NOT EXISTS meta_post_id TEXT;
+ALTER TABLE content_items ADD COLUMN IF NOT EXISTS published_via TEXT DEFAULT 'meta_graph';

@@ -55,7 +55,9 @@ Key design rule: **nothing in `/app/core` or `/app/routes` references a brand na
 | POST | `/cron/generate` | `X-Cron-Secret` header | blanket loop for all due active brands/platforms (respects cadence) |
 | POST | `/onboard/start` | `X-Cron-Secret` header | open a Nova onboarding thread; body `{brand_id, display_name, channel}` |
 | POST | `/slack/events` | Slack HMAC signature | Slack Events API: `url_verification` + `message.groups` (private channel) |
-| POST | `/slack/interactions` | Slack HMAC signature | button clicks: content Approve/Reject, onboarding, interactive generation |
+| POST | `/slack/interactions` | Slack HMAC signature | button clicks: content Approve/Reject, **Publish now / Schedule (V2)**, onboarding, interactive generation |
+| POST | `/publish` | `X-Cron-Secret` header | V2: publish or schedule an approved content item to its Facebook page. Body `{item_id, scheduled_for?}` |
+| GET | `/meta/verify` | `X-Cron-Secret` header | V2: verify `META_PAGE_ACCESS_TOKEN` works against `META_PAGE_ID` |
 
 All Slack-signed endpoints verify HMAC-SHA256 with `SLACK_SIGNING_SECRET` and reject >5min-old timestamps (replay protection).
 
@@ -89,7 +91,10 @@ PGPASSWORD='SDKkDXQSUDdkVccpGoHEPTkfFHbeXsod' \
 | `SLACK_SIGNING_SECRET` | for HMAC verification of events + interactions |
 | `SLACK_CONTENT_CHANNEL` | `C0BF8QKP0PL` (private channel named `nova-agent`) |
 | `DATABASE_URL` | reference var `${{Postgres.DATABASE_URL}}` — if it ever shows empty, re-set it (`railway variables set 'DATABASE_URL=${{Postgres.DATABASE_URL}}'`) |
-| `CRON_SECRET` | `massive-music-tech-issues` — required header for `/generate/start`, `/cron/generate`, and `/onboard/start` |
+| `CRON_SECRET` | `massive-music-tech-issues` — required header for `/generate/start`, `/cron/generate`, `/onboard/start`, `/publish`, `/meta/verify` |
+| `META_PAGE_ID` | `120368170965` (BICCU Facebook page) — V2 |
+| `META_PAGE_ACCESS_TOKEN` | long-lived Page Access Token with `pages_manage_posts` scope — V2 |
+| `META_API_VERSION` | `v23.0` (optional) — V2 |
 
 **Gotcha:** setting env vars via the Railway dashboard can wipe the `DATABASE_URL` reference. Always re-check `railway variables | grep DATABASE_URL` after env edits and re-wire if blank.
 
@@ -269,7 +274,7 @@ Kenneth's ask: Nova should ask who to generate for and which platforms, instead 
 
 ## 12. NEXT STEP — V2 (not built yet)
 
-- `/publish` endpoint — select approved items, push to Meta Graph API or Pipeboard Meta Ads MCP tool, set `status='posted'` + `posted_at`.
+- ~~`/publish` endpoint — select approved items, push to Meta Graph API or Pipeboard Meta Ads MCP tool, set `status='posted'` + `posted_at`.~~ **DONE — see section 14.**
 - Image generation — `generator.generate_image` is a stub returning `None`. Wire via Auto mode across Grok, Gemini, ChatGPT when ready.
 
 ---
@@ -282,3 +287,76 @@ Kenneth's ask: Nova should ask who to generate for and which platforms, instead 
 - `append_onboarding_answer` uses `answers || jsonb_build_object(...)` which is safe but worth noting if answers ever get nested.
 - Onboarding Phase 6 still asks cadence "per platform" in prose but config stores a single `posting_cadence_days` — fine for V1, may need per-platform cadence later.
 - Drafts approved before `8e87f12` may still show stale Approve/Reject buttons in Slack even though the DB status is correct. Re-approve not needed; generate new drafts to see the updated UX.
+
+---
+
+## 14. V2 — Meta Graph API publish + schedule (COMPLETE 2026-07-05)
+
+Approved Facebook drafts can be published immediately or scheduled to the brand's Facebook Page directly via the Meta Graph API. No MCP plugin — direct Graph calls. Instagram + LinkedIn are deferred (V2.1).
+
+### Endpoints (new)
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| POST | `/publish` | `X-Cron-Secret` header | Publish (or schedule) an approved content item to its Facebook page. Body `{item_id, scheduled_for?}`. |
+| GET | `/meta/verify` | `X-Cron-Secret` header | Sanity check that `META_PAGE_ACCESS_TOKEN` works against `META_PAGE_ID`. Returns the page name. |
+
+### Slack UX
+
+After clicking **Approve** on a facebook draft, the message now shows two extra buttons:
+- **Publish now** → background task calls Meta Graph `POST /{page_id}/feed`, sets `status='posted'`, `posted_at`, `meta_post_id`. Message flips to ":rocket: Published to Facebook. Meta post id: `...`".
+- **Schedule** → swaps in a Slack `datetimepicker` + **Confirm schedule** button. On confirm, background task calls Meta with `published=false` + `scheduled_publish_time`, sets `status='scheduled'`, `scheduled_for`, `meta_post_id`. Meta publishes the post automatically at the requested time (10 min - 6 months out). No cron needed.
+
+Non-facebook approved drafts keep the pre-V2 "ready for manual posting" line (no publish buttons). The publish endpoints/handlers refuse non-facebook items with a clear error.
+
+### Files added/changed (V2)
+
+```
+schema.sql                              + meta_post_id TEXT, published_via TEXT DEFAULT 'meta_graph'
+app/core/meta_publisher.py              publish_page_post / schedule_page_post / verify_token
+app/core/db.py                          get_content_item; update_status extended (meta_post_id, scheduled_for)
+app/core/slack_client.py                format_resolved_approval_blocks now appends Publish/Schedule buttons
+                                        + format_schedule_picker_blocks, format_publish_result_blocks, update_message
+app/routes/publish.py                   POST /publish + GET /meta/verify (X-Cron-Secret gated)
+app/routes/slack_interactions.py        publish_now / publish_schedule / publish_confirm / publish_dt_* handlers
+app/main.py                             publish_router registered; version 1.3.0
+```
+
+### Environment variables (new in V2)
+
+| Var | Notes |
+| --- | --- |
+| `META_PAGE_ID` | `120368170965` (Bahama Islands Co-operative Credit Union Limited — the BICCU page) |
+| `META_PAGE_ACCESS_TOKEN` | long-lived Page Access Token with `pages_manage_posts` + `pages_read_engagement` scope. Kenneth generates via Graph API Explorer (see section 15). Effectively permanent. |
+| `META_API_VERSION` | `v23.0` (optional, defaults to v23.0) |
+
+### Status flow
+
+`pending_approval` → `approved` (Slack Approve) → `posted` (Publish now) **or** `scheduled` (Schedule). Meta publishes scheduled posts automatically at `scheduled_publish_time`; no follow-up cron required.
+
+### Brand plug-in rule still holds
+
+Nothing in `app/core/meta_publisher.py` hardcodes BICCU. The page id comes from `META_PAGE_ID`. To support a second brand's Facebook page later, store the page id in the brand's `config.json` (DB `brands` table) under e.g. `meta_page_id` and pass it through. The current single-env-var approach is a V2 shortcut for the one live brand.
+
+---
+
+## 15. Generating the META_PAGE_ACCESS_TOKEN (one-time setup)
+
+The Pipeboard Meta Ads MCP connection is scoped to `ads_management` only — it cannot create organic page posts. For V2 publishing we use a long-lived **Page Access Token** generated directly via the Graph API Explorer.
+
+1. Open https://developers.facebook.com/tools/explorer/ and pick your app.
+2. **User or Page** dropdown → **User Token** → click **Generate Access Token**.
+3. Check scopes: `pages_show_list`, `pages_manage_posts`, `pages_read_engagement`. Authorize, picking the **Bahama Islands Co-operative Credit Union Limited** page.
+4. Exchange the short-lived user token for a long-lived one:
+   ```
+   GET /oauth/access_token?grant_type=fb_exchange_token
+       &client_id={APP_ID}&client_secret={APP_SECRET}
+       &fb_exchange_token={SHORT_USER_TOKEN}
+   ```
+5. Switch the **User or Page** dropdown to **Page Token** and select the BICCU page. The token shown is the long-lived Page Access Token (effectively permanent — does not expire unless the app is removed or the page unlinks).
+6. Set on Railway:
+   ```bash
+   railway variables set 'META_PAGE_ACCESS_TOKEN=<paste>'
+   railway variables | grep DATABASE_URL   # gotcha: env edits can wipe the reference var
+   ```
+7. Verify: `curl -H "X-Cron-Secret: massive-music-tech-issues" https://nova-production-14f6.up.railway.app/meta/verify` should return `{"ok": true, "page_name": "Bahama Islands Co-operative Credit Union Limited"}`.

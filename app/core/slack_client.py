@@ -3,10 +3,32 @@ import os
 import requests
 
 SLACK_POST_URL = "https://slack.com/api/chat.postMessage"
+SLACK_UPDATE_URL = "https://slack.com/api/chat.update"
 
 
-def format_resolved_approval_blocks(original_blocks, status, user_id=None):
-    """Replace Approve/Reject buttons with a status line on the draft message."""
+def _extract_item_id_from_blocks(blocks):
+    """Scan a draft message's action blocks for the approve button value to
+    recover the content_item id. Returns int or None."""
+    for b in blocks or []:
+        if b.get("type") != "actions":
+            continue
+        for el in b.get("elements", []):
+            if el.get("action_id") == "approve":
+                val = el.get("value", "")
+                try:
+                    return int(val.split("_", 1)[1])
+                except (IndexError, ValueError):
+                    return None
+    return None
+
+
+def format_resolved_approval_blocks(original_blocks, status, user_id=None,
+                                    item_id=None, platform=None):
+    """Replace Approve/Reject buttons with a status line on the draft message.
+
+    For approved facebook items, also append Publish now / Schedule buttons so
+    the human can push the post to Meta from Slack without leaving the channel.
+    """
     blocks = [b for b in (original_blocks or []) if b.get("type") != "actions"]
     label = "Approved" if status == "approved" else "Rejected"
     emoji = ":white_check_mark:" if status == "approved" else ":x:"
@@ -14,8 +36,95 @@ def format_resolved_approval_blocks(original_blocks, status, user_id=None):
         status_text = f"{emoji} *{label}* by <@{user_id}>"
     else:
         status_text = f"{emoji} *{label}*"
-    if status == "approved":
-        status_text += " — ready for manual posting."
+
+    if item_id is None:
+        item_id = _extract_item_id_from_blocks(original_blocks)
+
+    if status == "approved" and platform == "facebook" and item_id is not None:
+        status_text += " — ready to publish."
+        blocks.append(
+            {
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": status_text}],
+            }
+        )
+        blocks.append(
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Publish now"},
+                        "style": "primary",
+                        "value": f"publish_now_{item_id}",
+                        "action_id": "publish_now",
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Schedule"},
+                        "value": f"publish_schedule_{item_id}",
+                        "action_id": "publish_schedule",
+                    },
+                ],
+            }
+        )
+    else:
+        if status == "approved":
+            status_text += " — ready for manual posting."
+        blocks.append(
+            {
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": status_text}],
+            }
+        )
+    return blocks
+
+
+def format_schedule_picker_blocks(item_id, original_blocks):
+    """Replace the publish actions block with a datetimepicker + confirm button
+    so the user can pick when Meta should publish the post."""
+    blocks = [b for b in (original_blocks or []) if b.get("type") != "actions"]
+    blocks.append(
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "Pick a time to schedule this post (10 min - 6 months out).",
+            },
+        }
+    )
+    blocks.append(
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "datetimepicker",
+                    "action_id": f"publish_dt_{item_id}",
+                    "initial_date_time": _default_schedule_ts(),
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Confirm schedule"},
+                    "style": "primary",
+                    "value": f"publish_confirm_{item_id}",
+                    "action_id": "publish_confirm",
+                },
+            ],
+        }
+    )
+    return blocks
+
+
+def _default_schedule_ts():
+    """Default the datetimepicker to ~1 hour from now (unix seconds, int)."""
+    import time as _time
+
+    return int(_time.time()) + 3600
+
+
+def format_publish_result_blocks(original_blocks, status_text):
+    """Replace the publish actions block with a final status line."""
+    blocks = [b for b in (original_blocks or []) if b.get("type") != "actions"]
     blocks.append(
         {
             "type": "context",
@@ -94,3 +203,24 @@ def post_message(channel, text=None, blocks=None, thread_ts=None):
     if not data.get("ok"):
         raise RuntimeError(f"Slack post_message failed: {data}")
     return data["ts"]
+
+
+def update_message(channel, ts, text=None, blocks=None):
+    """Update an existing message in place. Used by background tasks that
+    follow up an immediate `replace_original` ack with the final result."""
+    bot_token = os.environ["SLACK_BOT_TOKEN"]
+    payload = {"channel": channel, "ts": ts}
+    if text:
+        payload["text"] = text
+    if blocks:
+        payload["blocks"] = blocks
+
+    resp = requests.post(
+        SLACK_UPDATE_URL,
+        headers={"Authorization": f"Bearer {bot_token}"},
+        json=payload,
+    )
+    data = resp.json()
+    if not data.get("ok"):
+        raise RuntimeError(f"Slack update_message failed: {data}")
+    return data.get("ts")

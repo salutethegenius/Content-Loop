@@ -10,7 +10,13 @@ from fastapi.responses import JSONResponse
 
 from core import db, generation_flow, onboarding
 from core.db import update_status
-from core.slack_client import format_resolved_approval_blocks, post_message
+from core.slack_client import (
+    format_publish_result_blocks,
+    format_resolved_approval_blocks,
+    format_schedule_picker_blocks,
+    post_message,
+    update_message,
+)
 
 router = APIRouter()
 
@@ -77,8 +83,16 @@ async def handle_interaction(request: Request, background_tasks: BackgroundTasks
         status = "approved" if action_id == "approve" else "rejected"
         update_status(item_id, status)
         user_id = (payload.get("user") or {}).get("id")
+
+        # Load the item so the formatter knows whether to surface publish
+        # buttons (V2: facebook only). Safe to skip on miss — falls back to
+        # the pre-V2 "ready for manual posting" line.
+        item = db.get_content_item(item_id)
+        platform = item.get("platform") if item else None
+
         updated_blocks = format_resolved_approval_blocks(
-            message.get("blocks"), status, user_id
+            message.get("blocks"), status, user_id,
+            item_id=item_id, platform=platform,
         )
         return JSONResponse(
             content={
@@ -87,6 +101,67 @@ async def handle_interaction(request: Request, background_tasks: BackgroundTasks
                 "text": message.get("text") or f"Draft {status}",
             }
         )
+
+    # --- Publish actions (V2) ---
+    if action_id == "publish_now":
+        try:
+            item_id = int(value.split("_", 1)[1])
+        except (IndexError, ValueError):
+            raise HTTPException(status_code=400, detail="Bad action value")
+        # Ack immediately with a "Publishing..." state; background task does
+        # the Graph API call and flips the message to the final status.
+        intermediate = format_publish_result_blocks(
+            message.get("blocks"), ":clock1: Publishing to Facebook..."
+        )
+        background_tasks.add_task(
+            _handle_publish_now, item_id, channel, message.get("ts"),
+            message.get("blocks"),
+        )
+        return JSONResponse(
+            content={"replace_original": True, "blocks": intermediate}
+        )
+
+    if action_id == "publish_schedule":
+        try:
+            item_id = int(value.split("_", 1)[1])
+        except (IndexError, ValueError):
+            raise HTTPException(status_code=400, detail="Bad action value")
+        picker_blocks = format_schedule_picker_blocks(item_id, message.get("blocks"))
+        return JSONResponse(
+            content={"replace_original": True, "blocks": picker_blocks}
+        )
+
+    if action_id == "publish_confirm":
+        try:
+            item_id = int(value.split("_", 1)[1])
+        except (IndexError, ValueError):
+            raise HTTPException(status_code=400, detail="Bad action value")
+        # Pull the datetimepicker value out of state.values
+        selected_ts = _extract_datetimepicker_value(payload, item_id)
+        if not selected_ts:
+            return JSONResponse(
+                content={
+                    "replace_original": True,
+                    "blocks": format_publish_result_blocks(
+                        message.get("blocks"),
+                        ":x: No time selected. Click Schedule again.",
+                    ),
+                }
+            )
+        intermediate = format_publish_result_blocks(
+            message.get("blocks"), ":clock1: Scheduling on Facebook..."
+        )
+        background_tasks.add_task(
+            _handle_publish_schedule, item_id, selected_ts,
+            channel, message.get("ts"), message.get("blocks"),
+        )
+        return JSONResponse(
+            content={"replace_original": True, "blocks": intermediate}
+        )
+
+    # datetimepicker change events — Slack still requires a 200 ack
+    if action_id and action_id.startswith("publish_dt_"):
+        return {"ok": True}
 
     # --- Onboarding actions (defer slow work to background) ---
     if action_id in ("onboard_approve", "onboard_reject", "onboard_regenerate"):
@@ -174,3 +249,143 @@ def _handle_onboarding_action(action_id, brand_id, channel, thread_ts):
                 text=f"Regeneration failed: {exc}",
                 thread_ts=thread_ts,
             )
+
+
+def _extract_datetimepicker_value(payload, item_id):
+    """Read the selected unix timestamp from a datetimepicker in the
+    interaction's state.values, keyed by the publish_dt_{item_id} action id."""
+    state = payload.get("state") or {}
+    values = state.get("values") or {}
+    for block_values in values.values():
+        for action_id, action_state in block_values.items():
+            if action_id == f"publish_dt_{item_id}":
+                selected = (action_state or {}).get("selected_date_time")
+                return selected
+    return None
+
+
+def _handle_publish_now(item_id, channel, message_ts, original_blocks):
+    """Background task: publish an approved facebook draft via the Meta Graph
+    API, then flip the Slack message to a final status line."""
+    from datetime import datetime, timezone
+
+    from core import meta_publisher
+
+    item = db.get_content_item(item_id)
+    if not item:
+        update_message(
+            channel, message_ts,
+            blocks=format_publish_result_blocks(
+                original_blocks, ":x: Item not found."
+            ),
+        )
+        return
+    if item["status"] != "approved":
+        update_message(
+            channel, message_ts,
+            blocks=format_publish_result_blocks(
+                original_blocks,
+                f":x: Cannot publish — item status is '{item['status']}'.",
+            ),
+        )
+        return
+    if item["platform"] != "facebook":
+        update_message(
+            channel, message_ts,
+            blocks=format_publish_result_blocks(
+                original_blocks,
+                ":x: V2 supports Facebook publishing only.",
+            ),
+        )
+        return
+
+    try:
+        meta_post_id = meta_publisher.publish_page_post(item["draft_text"])
+    except Exception as exc:
+        update_message(
+            channel, message_ts,
+            blocks=format_publish_result_blocks(
+                original_blocks, f":x: Meta publish failed: {exc}"
+            ),
+        )
+        return
+
+    db.update_status(
+        item_id, "posted",
+        meta_post_id=meta_post_id,
+        posted_at=datetime.now(timezone.utc),
+    )
+    update_message(
+        channel, message_ts,
+        blocks=format_publish_result_blocks(
+            original_blocks,
+            f":rocket: Published to Facebook. Meta post id: `{meta_post_id}`",
+        ),
+    )
+
+
+def _handle_publish_schedule(item_id, selected_ts, channel, message_ts,
+                             original_blocks):
+    """Background task: schedule an approved facebook draft via the Meta Graph
+    API, then flip the Slack message to a final status line."""
+    from datetime import datetime, timezone
+
+    from core import meta_publisher
+
+    item = db.get_content_item(item_id)
+    if not item:
+        update_message(
+            channel, message_ts,
+            blocks=format_publish_result_blocks(
+                original_blocks, ":x: Item not found."
+            ),
+        )
+        return
+    if item["status"] != "approved":
+        update_message(
+            channel, message_ts,
+            blocks=format_publish_result_blocks(
+                original_blocks,
+                f":x: Cannot schedule — item status is '{item['status']}'.",
+            ),
+        )
+        return
+    if item["platform"] != "facebook":
+        update_message(
+            channel, message_ts,
+            blocks=format_publish_result_blocks(
+                original_blocks,
+                ":x: V2 supports Facebook scheduling only.",
+            ),
+        )
+        return
+
+    # Slack datetimepicker returns unix seconds (int). Meta wants unix seconds
+    # for scheduled_publish_time, but our meta_publisher takes an ISO string.
+    scheduled_dt = datetime.fromtimestamp(selected_ts, tz=timezone.utc)
+    iso = scheduled_dt.isoformat()
+
+    try:
+        meta_post_id = meta_publisher.schedule_page_post(item["draft_text"], iso)
+    except Exception as exc:
+        update_message(
+            channel, message_ts,
+            blocks=format_publish_result_blocks(
+                original_blocks, f":x: Meta schedule failed: {exc}"
+            ),
+        )
+        return
+
+    db.update_status(
+        item_id, "scheduled",
+        meta_post_id=meta_post_id,
+        scheduled_for=iso,
+    )
+    update_message(
+        channel, message_ts,
+        blocks=format_publish_result_blocks(
+            original_blocks,
+            f":calendar: Scheduled for {scheduled_dt.strftime('%Y-%m-%d %H:%M UTC')}. "
+            f"Meta post id: `{meta_post_id}`",
+        ),
+    )

@@ -29,8 +29,17 @@ def save_draft(brand_id, platform, draft_text):
         conn.close()
 
 
-def update_status(item_id, status, slack_message_ts=None, posted_at=None):
-    """Update an item's status and optionally its Slack ts / posted timestamp."""
+def update_status(
+    item_id,
+    status,
+    slack_message_ts=None,
+    posted_at=None,
+    meta_post_id=None,
+    scheduled_for=None,
+):
+    """Update an item's status and optionally its Slack ts / posted timestamp /
+    Meta post id / scheduled_for time. Uses COALESCE so any kwarg left as None
+    preserves the existing value."""
     conn = get_conn()
     try:
         with conn.cursor() as cur:
@@ -40,12 +49,59 @@ def update_status(item_id, status, slack_message_ts=None, posted_at=None):
                    SET status = %s,
                        slack_message_ts = COALESCE(%s, slack_message_ts),
                        approved_at = CASE WHEN %s = 'approved' THEN now() ELSE approved_at END,
-                       posted_at = COALESCE(%s, posted_at)
+                       posted_at = COALESCE(%s, posted_at),
+                       meta_post_id = COALESCE(%s, meta_post_id),
+                       scheduled_for = COALESCE(%s, scheduled_for)
                  WHERE id = %s
                 """,
-                (status, slack_message_ts, status, posted_at, item_id),
+                (
+                    status,
+                    slack_message_ts,
+                    status,
+                    posted_at,
+                    meta_post_id,
+                    scheduled_for,
+                    item_id,
+                ),
             )
             conn.commit()
+    finally:
+        conn.close()
+
+
+def get_content_item(item_id):
+    """Return a content_items row by id, or None. Includes meta_post_id."""
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, brand, platform, draft_text, image_url, status,
+                       slack_message_ts, scheduled_for, created_at,
+                       approved_at, posted_at, meta_post_id, published_via
+                  FROM content_items
+                 WHERE id = %s
+                """,
+                (item_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            return {
+                "id": row[0],
+                "brand": row[1],
+                "platform": row[2],
+                "draft_text": row[3],
+                "image_url": row[4],
+                "status": row[5],
+                "slack_message_ts": row[6],
+                "scheduled_for": row[7],
+                "created_at": row[8],
+                "approved_at": row[9],
+                "posted_at": row[10],
+                "meta_post_id": row[11],
+                "published_via": row[12],
+            }
     finally:
         conn.close()
 
