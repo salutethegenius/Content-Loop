@@ -365,9 +365,6 @@ The Pipeboard Meta Ads MCP connection is scoped to `ads_management` only — it 
 
 ### Token lifecycle note (2026-07-05)
 
-The current `META_PAGE_ACCESS_TOKEN` on Railway is **short-lived (~1 hour)** — it was generated from a short-lived user token without the `fb_exchange_token` exchange. Re-generate before it expires (or for permanent use):
-1. In Graph API Explorer, run `GET /oauth/access_token?grant_type=fb_exchange_token&client_id={APP_ID}&client_secret={APP_SECRET}&fb_exchange_token={CURRENT_SHORT_USER_TOKEN}` to get a 60-day user token.
-2. Re-run `120368170965?fields=name,access_token` with the long-lived user token in the Explorer's token field. The returned page `access_token` is now long-lived (effectively permanent).
-3. `railway variables set 'META_PAGE_ACCESS_TOKEN=<new-long-lived-token>'` and verify `DATABASE_URL` survives.
+The `META_PAGE_ACCESS_TOKEN` on Railway is **long-lived (never expires, `expires_at: 0`)** — generated via the `fb_exchange_token` flow + page-token re-fetch. App used is "Nova-Agent" (app id `27311849091810327`), token type PAGE, scopes `pages_show_list` + `pages_read_engagement` + `pages_manage_posts`. It only stops working if the app is removed from the page or the page unlinks the app.
 
-The app used is "Nova-Agent" (app id `27311849091810327`), token type PAGE, scopes `pages_show_list` + `pages_read_engagement` + `pages_manage_posts`.
+To regenerate from scratch (e.g. for a second brand's page): see the steps in section 15.
