@@ -7,6 +7,27 @@ from core.brand_loader import load_voice
 
 MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
+PLATFORM_OFFSETS = {
+    "facebook": 0,
+    "instagram": 1,
+    "linkedin": 2,
+}
+
+PLATFORM_FORMAT_HINTS = {
+    "facebook": (
+        "Facebook: conversational, community-oriented tone. "
+        "Use 2 to 4 hashtags at the end unless voice rules say otherwise."
+    ),
+    "instagram": (
+        "Instagram: punchy opening line, line breaks for readability, "
+        "hashtags and emoji per voice rules."
+    ),
+    "linkedin": (
+        "LinkedIn: professional tone, short paragraphs, "
+        "minimal hashtags unless voice rules say otherwise."
+    ),
+}
+
 
 def _normalize_pillars(raw):
     """Accept either ["name", ...] or [{"pillar":"name","description":"..."}, ...]."""
@@ -36,9 +57,7 @@ def pick_pillar(brand_config, platform=None):
     if not pillars:
         return None
     base = date.toordinal(date.today())
-    offset = 0
-    if platform == "linkedin":
-        offset = 1
+    offset = PLATFORM_OFFSETS.get(platform, 0)
     idx = (base + offset) % len(pillars)
     return pillars[idx]
 
@@ -52,10 +71,15 @@ def generate_draft(brand_config, platform):
     Claude to invent a topic within the brand's voice territory.
     """
     voice = load_voice(brand_config["brand_id"])
+    format_hint = PLATFORM_FORMAT_HINTS.get(platform, "")
 
     system_prompt = (
         f"{voice}\n\n"
         f"You are drafting a {platform} post for {brand_config['display_name']}.\n"
+    )
+    if format_hint:
+        system_prompt += f"{format_hint}\n"
+    system_prompt += (
         "Follow the voice rules above exactly. No em-dashes.\n"
         "Return only the post copy, nothing else. No preamble, no quotes."
     )

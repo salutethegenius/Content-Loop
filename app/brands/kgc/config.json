@@ -2,7 +2,7 @@
   "brand_id": "kgc",
   "display_name": "Kemis Group of Companies",
   "active": true,
-  "platforms": ["instagram", "linkedin"],
+  "platforms": ["facebook", "instagram"],
   "posting_cadence_days": 3,
   "image_style_prompt": "sovereign navy and gold, institutional, clean"
 }

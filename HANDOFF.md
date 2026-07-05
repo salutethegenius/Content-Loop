@@ -197,37 +197,39 @@ Auto-deploy is on — pushing to `main` triggers a Railway rebuild. Setting env 
 
 ---
 
-## 11. NEXT STEP — what Kenneth wants next session
+## 11. Interactive targeted generation — BUILT (2026-07-05)
 
-> "Have Nova ask first who she will be generating posts for, and not just generate for all brands, this could be wasteful. Also should ask which channels she is generating for. Facebook and IG are already first, then optional platforms like LinkedIn."
+> Original ask: "Have Nova ask first who she will be generating posts for, and not just generate for all brands... Also should ask which channels she is generating for. Facebook and IG are already first, then optional platforms like LinkedIn."
 
-### The requirement
+### What shipped
 
-Today `/cron/generate` blindly loops over **all** active brands × **all** their platforms and generates a draft for each. That is wasteful: Kenneth may only want posts for one brand on a given run, or only Instagram + Facebook (not LinkedIn).
+1. **`POST /generate/start`** (X-Cron-Secret gated) — posts a Slack brand picker in `SLACK_CONTENT_CHANNEL` (or optional `channel` in body). Kenneth triggers manually instead of blanket cron when he wants control.
+2. **Slack button flow** — `gen_pick_brand` → platform picker in thread → `gen_confirm` runs generation in a background task. Drafts still land in the approval channel via `post_for_approval`.
+3. **`/cron/generate` kept** as the blanket scheduled path (respects cadence). Interactive flow skips cadence so manual runs always generate.
+4. **Platform defaults** — seed configs and onboarding synthesis now default to `["facebook", "instagram"]` with LinkedIn opt-in. `generator.py` has Facebook formatting hints and per-platform pillar offsets.
+5. **Onboarding Phase 5** updated to ask about Facebook + Instagram as primary, LinkedIn optional.
 
-The next build makes generation **interactive and targeted**:
+### Trigger the interactive flow
 
-1. **Nova asks who she is generating for** — instead of (or in addition to) the blanket cron, a flow where Nova posts a Slack message asking which brand(s) to generate for this run. Could be buttons (one per active brand) or a multi-select.
-2. **Nova asks which platforms** — for the selected brand(s), ask which platforms to generate for this run.
-3. **Platform priority shift** — Facebook and Instagram are the **primary** platforms. LinkedIn is **optional**. This is a change from the current configs which default to `["instagram", "linkedin"]`.
+```bash
+curl -X POST -H "X-Cron-Secret: massive-music-tech-issues" \
+  https://nova-production-14f6.up.railway.app/generate/start
+```
 
-### Implementation notes for the next session
+Optional body: `{"channel":"C0BF8QKP0PL"}` to override the default channel.
 
-- **Platform contract change:** `config.json` `platforms` should default to `["facebook", "instagram"]` with `linkedin` as an opt-in third. The generator's system prompt already mentions per-platform formatting; BICCU's voice.md already has Facebook hashtag rules ("Use 2 to 4 hashtags on Facebook") so Facebook is partially anticipated. Need to:
-  - Update `generator.generate_draft` to handle `platform == "facebook"` (formatting rules in the system prompt).
-  - Update the onboarding Phase 5 script to ask about Facebook explicitly as a primary platform (currently it asks about Instagram vs LinkedIn).
-  - Update filesystem seed configs (`kgc`, `biccu`, `drewber`) to `["facebook", "instagram"]` and re-onboard BICCU if Kenneth wants LinkedIn back in.
-- **New endpoint or extend the cron flow:** likely a new `POST /generate/start` (X-Cron-Secret gated) that posts a Slack message with brand-selection buttons. On brand selection, post platform-selection buttons. On platform confirmation, run the loop for just that brand/platform subset. The existing `/cron/generate` can stay as the blanket fallback for the scheduled Railway cron, OR be replaced by the interactive flow depending on Kenneth's preference.
-- **Slack interaction actions to add:** `gen_pick_brand` (value = brand_id), `gen_pick_platforms` (value = brand_id + platform subset, probably encoded as `brand_id:facebook,instagram`), `gen_confirm` (kicks off generation in a BackgroundTask).
-- **State:** can use a lightweight `generation_requests` table or just drive it statelessly through sequential button payloads. Stateless is simpler if each button click carries enough context in its `value`.
-- **Keep the cron path working** — Railway cron can still hit `/cron/generate` for the blanket run, but Kenneth may want to remove the cron schedule and use the interactive flow exclusively. Ask him.
+### Decisions made (confirm with Kenneth if wrong)
 
-### Open questions to confirm with Kenneth before building
+| Question | Default chosen |
+| --- | --- |
+| Replace cron or alongside? | **Alongside** — cron stays, interactive for manual runs |
+| Multi-brand per run? | **One brand at a time** via buttons |
+| Platform menu source? | **Brand config drives options**; defaults changed to facebook + instagram |
+| Which channel? | **`SLACK_CONTENT_CHANNEL`** (`nova-agent`) |
 
-1. Does the interactive flow **replace** the blanket `/cron/generate` cron, or run **alongside** it (cron as fallback, interactive for manual runs)?
-2. Multi-brand per run, or one brand at a time?
-3. For platforms: hard default to Facebook + Instagram with LinkedIn opt-in, or per-brand config still drives the menu and we just change the defaults?
-4. Should the interactive prompt live in the same `nova-agent` channel or a dedicated `#nova-generate` channel?
+### Follow-up for Kenneth
+
+- Consider removing the Railway cron schedule if he wants interactive-only generation.
 
 ---
 

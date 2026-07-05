@@ -7,7 +7,7 @@ from urllib.parse import parse_qs
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
-from core import db, onboarding
+from core import db, generation_flow, onboarding
 from core.db import update_status
 from core.slack_client import post_message
 
@@ -37,10 +37,11 @@ def _verify_slack_signature(timestamp: str, signature: str, body: bytes) -> bool
 async def handle_interaction(request: Request, background_tasks: BackgroundTasks):
     """Handle Approve/Reject button clicks from Slack.
 
-    Two action families share this endpoint:
+    Action families:
     - Content approval: action_id `approve`/`reject`, value `{action}_{item_id}`.
     - Onboarding approval: action_id `onboard_approve`/`onboard_reject`/
       `onboard_regenerate`, value `brand_id`.
+    - Interactive generation: `gen_pick_brand`, `gen_confirm`.
     """
     raw_body = await request.body()
     timestamp = request.headers.get("X-Slack-Request-Timestamp", "")
@@ -63,7 +64,8 @@ async def handle_interaction(request: Request, background_tasks: BackgroundTasks
     action_id = action.get("action_id")
     value = action.get("value", "")
     channel = payload.get("channel", {}).get("id")
-    thread_ts = payload.get("message", {}).get("thread_ts")
+    message = payload.get("message", {}) or {}
+    thread_ts = message.get("thread_ts") or message.get("ts")
 
     # --- Content approval actions ---
     if action_id in ("approve", "reject"):
@@ -79,6 +81,21 @@ async def handle_interaction(request: Request, background_tasks: BackgroundTasks
         brand_id = value
         background_tasks.add_task(
             _handle_onboarding_action, action_id, brand_id, channel, thread_ts
+        )
+        return {"ok": True}
+
+    # --- Interactive generation actions ---
+    if action_id == "gen_pick_brand":
+        brand_id = value.strip().lower()
+        background_tasks.add_task(
+            generation_flow.handle_pick_brand, brand_id, channel, thread_ts
+        )
+        return {"ok": True}
+
+    if action_id == "gen_confirm":
+        brand_id, platforms = generation_flow.parse_confirm_value(value)
+        background_tasks.add_task(
+            generation_flow.handle_confirm, brand_id, platforms, channel, thread_ts
         )
         return {"ok": True}
 

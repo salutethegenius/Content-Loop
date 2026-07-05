@@ -2,7 +2,7 @@
   "brand_id": "biccu",
   "display_name": "BICCU",
   "active": true,
-  "platforms": ["instagram", "linkedin"],
+  "platforms": ["facebook", "instagram"],
   "posting_cadence_days": 3,
   "image_style_prompt": "credit-union blue and white, community-forward, clean"
 }

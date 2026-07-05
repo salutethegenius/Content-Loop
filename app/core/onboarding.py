@@ -72,12 +72,13 @@ PHASES = [
     ),
     (
         "platform",
-        "Phase 5 - Platform behavior (Instagram vs LinkedIn)",
+        "Phase 5 - Platform behavior (Facebook, Instagram, optional LinkedIn)",
         [
-            "How should your voice differ between Instagram and LinkedIn, if at all? Same tone different length, or different tone entirely?",
+            "Facebook and Instagram are our primary platforms. How should your voice differ between them, if at all?",
+            "Facebook: preferred post length, hashtag count (typically 2 to 4), emoji policy.",
             "Instagram: preferred post length, hashtag count, emoji policy, any visual conventions.",
-            "LinkedIn: preferred post length, paragraph style, links in body or in comments, hashtag policy.",
-            "Are there other platforms you want to add in V2? Threads, X, Facebook, TikTok. Flag for later.",
+            "Do you want LinkedIn as an optional third platform? If yes, how should LinkedIn differ from Facebook and Instagram?",
+            "Are there other platforms you want to add later? Threads, X, TikTok. Flag for later.",
         ],
     ),
     (
@@ -214,13 +215,14 @@ def synthesize_brand(brand_id, display_name, answers):
         "- A tone paragraph\n"
         "- `## Do` (bulleted)\n"
         "- `## Don't` (bulleted, include banned words)\n"
-        "- `## Formatting` (per-platform: Instagram and LinkedIn rules)\n"
+        "- `## Formatting` (per-platform: Facebook, Instagram, and LinkedIn if requested)\n"
         "- `## Content pillars` (the 4-8 themes, one line each)\n\n"
         "config.json contract (all fields required):\n"
         "- brand_id: lowercase slug, must match the input\n"
         "- display_name: human-readable name\n"
         "- active: true\n"
-        "- platforms: array, subset of ['instagram','linkedin']\n"
+        "- platforms: array, subset of ['facebook','instagram','linkedin']. "
+        "Default to ['facebook','instagram'] unless the answers explicitly request LinkedIn.\n"
         "- posting_cadence_days: integer\n"
         "- image_style_prompt: one-sentence visual direction\n"
         "- content_pillars: array of {pillar, description} objects derived from the answers\n\n"

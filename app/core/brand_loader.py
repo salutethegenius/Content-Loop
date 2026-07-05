@@ -41,6 +41,14 @@ def get_active_brands():
     return brands
 
 
+def get_brand_by_id(brand_id):
+    """Return an active brand config by id, or None."""
+    for brand in get_active_brands():
+        if brand.get("brand_id") == brand_id:
+            return brand
+    return None
+
+
 def load_voice(brand_id):
     """Return the raw markdown system prompt for a brand.
 
