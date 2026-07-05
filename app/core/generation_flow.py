@@ -21,7 +21,7 @@ def format_brand_picker_blocks(brands):
             "type": "button",
             "text": {"type": "plain_text", "text": brand["display_name"]},
             "value": brand["brand_id"],
-            "action_id": "gen_pick_brand",
+            "action_id": f"gen_pick_brand_{brand['brand_id']}",
         }
         for brand in brands
     ]
@@ -71,7 +71,7 @@ def format_platform_picker_blocks(brand):
                 "text": {"type": "plain_text", "text": "Facebook + Instagram"},
                 "style": "primary",
                 "value": f"{brand_id}:facebook,instagram",
-                "action_id": "gen_confirm",
+                "action_id": f"gen_confirm_{brand_id}_fb_ig",
             }
         )
 
@@ -84,7 +84,7 @@ def format_platform_picker_blocks(brand):
                 "type": "button",
                 "text": {"type": "plain_text", "text": label},
                 "value": f"{brand_id}:{platform}",
-                "action_id": "gen_confirm",
+                "action_id": f"gen_confirm_{brand_id}_{platform}",
             }
         )
 
@@ -94,7 +94,7 @@ def format_platform_picker_blocks(brand):
                 "type": "button",
                 "text": {"type": "plain_text", "text": "All configured platforms"},
                 "value": f"{brand_id}:{','.join(configured)}",
-                "action_id": "gen_confirm",
+                "action_id": f"gen_confirm_{brand_id}_all",
             }
         )
 

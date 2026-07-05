@@ -41,7 +41,7 @@ async def handle_interaction(request: Request, background_tasks: BackgroundTasks
     - Content approval: action_id `approve`/`reject`, value `{action}_{item_id}`.
     - Onboarding approval: action_id `onboard_approve`/`onboard_reject`/
       `onboard_regenerate`, value `brand_id`.
-    - Interactive generation: `gen_pick_brand`, `gen_confirm`.
+    - Interactive generation: `gen_pick_brand_*`, `gen_confirm_*`.
     """
     raw_body = await request.body()
     timestamp = request.headers.get("X-Slack-Request-Timestamp", "")
@@ -85,14 +85,14 @@ async def handle_interaction(request: Request, background_tasks: BackgroundTasks
         return {"ok": True}
 
     # --- Interactive generation actions ---
-    if action_id == "gen_pick_brand":
+    if action_id and action_id.startswith("gen_pick_brand_"):
         brand_id = value.strip().lower()
         background_tasks.add_task(
             generation_flow.handle_pick_brand, brand_id, channel, thread_ts
         )
         return {"ok": True}
 
-    if action_id == "gen_confirm":
+    if action_id and action_id.startswith("gen_confirm_"):
         brand_id, platforms = generation_flow.parse_confirm_value(value)
         background_tasks.add_task(
             generation_flow.handle_confirm, brand_id, platforms, channel, thread_ts
