@@ -87,6 +87,7 @@ def format_schedule_picker_blocks(item_id, original_blocks):
     blocks.append(
         {
             "type": "section",
+            "block_id": "schedule_picker_hint",
             "text": {
                 "type": "mrkdwn",
                 "text": "Pick a time to schedule this post (10 min - 6 months out).",
@@ -123,8 +124,13 @@ def _default_schedule_ts():
 
 
 def format_publish_result_blocks(original_blocks, status_text):
-    """Replace the publish actions block with a final status line."""
-    blocks = [b for b in (original_blocks or []) if b.get("type") != "actions"]
+    """Replace the publish actions block with a final status line. Also strips
+    the schedule-picker hint section if present (left over from the picker)."""
+    blocks = [
+        b
+        for b in (original_blocks or [])
+        if b.get("type") != "actions" and b.get("block_id") != "schedule_picker_hint"
+    ]
     blocks.append(
         {
             "type": "context",

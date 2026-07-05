@@ -6,7 +6,6 @@ import time
 from urllib.parse import parse_qs
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
-from fastapi.responses import JSONResponse
 
 from core import db, generation_flow, onboarding
 from core.db import update_status
@@ -97,18 +96,14 @@ async def handle_interaction(request: Request, background_tasks: BackgroundTasks
             item_id = int(value.rsplit("_", 1)[1])
         except (IndexError, ValueError):
             raise HTTPException(status_code=400, detail="Bad action value")
-        # Ack immediately with a "Publishing..." state; background task does
-        # the Graph API call and flips the message to the final status.
-        intermediate = format_publish_result_blocks(
-            message.get("blocks"), ":clock1: Publishing to Facebook..."
-        )
+        # Ack immediately; background task shows "Publishing..." then the
+        # Graph API result. Pure background pattern avoids any race between
+        # a replace_original response and the followup chat.update.
         background_tasks.add_task(
             _handle_publish_now, item_id, channel, message.get("ts"),
             message.get("blocks"),
         )
-        return JSONResponse(
-            content={"replace_original": True, "blocks": intermediate}
-        )
+        return {"ok": True}
 
     if action_id == "publish_schedule":
         try:
@@ -329,6 +324,17 @@ def _handle_publish_now(item_id, channel, message_ts, original_blocks):
             ),
         )
         return
+
+    # Show an intermediate "Publishing..." state so the user sees feedback.
+    try:
+        update_message(
+            channel, message_ts,
+            blocks=format_publish_result_blocks(
+                original_blocks, ":clock1: Publishing to Facebook..."
+            ),
+        )
+    except Exception:
+        pass
 
     try:
         meta_post_id = meta_publisher.publish_page_post(item["draft_text"])

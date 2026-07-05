@@ -1,6 +1,6 @@
 # Content Loop Agent — Session Handoff
 
-**Last updated:** 2026-07-05
+**Last updated:** 2026-07-05 (V2 publish + schedule + `/nova` slash command — verified live)
 **Repo:** https://github.com/salutethegenius/Content-Loop (private)
 **Live deployment:** https://nova-production-14f6.up.railway.app
 **Railway project:** `verityos-agents` (ID `47ab2c83-6fc9-42e7-9a12-92c98552c2ea`), service `nova`, environment `production`
@@ -56,6 +56,7 @@ Key design rule: **nothing in `/app/core` or `/app/routes` references a brand na
 | POST | `/onboard/start` | `X-Cron-Secret` header | open a Nova onboarding thread; body `{brand_id, display_name, channel}` |
 | POST | `/slack/events` | Slack HMAC signature | Slack Events API: `url_verification` + `message.groups` (private channel) |
 | POST | `/slack/interactions` | Slack HMAC signature | button clicks: content Approve/Reject, **Publish now / Schedule (V2)**, onboarding, interactive generation |
+| POST | `/slack/commands` | Slack HMAC signature | V2: `/nova` slash command — posts brand picker to `#nova-agent` from inside Slack |
 | POST | `/publish` | `X-Cron-Secret` header | V2: publish or schedule an approved content item to its Facebook page. Body `{item_id, scheduled_for?}` |
 | GET | `/meta/verify` | `X-Cron-Secret` header | V2: verify `META_PAGE_ACCESS_TOKEN` works against `META_PAGE_ID` |
 
@@ -272,10 +273,12 @@ Kenneth's ask: Nova should ask who to generate for and which platforms, instead 
 
 ---
 
-## 12. NEXT STEP — V2 (not built yet)
+## 12. NEXT STEP — V2.1 (not built yet)
 
-- ~~`/publish` endpoint — select approved items, push to Meta Graph API or Pipeboard Meta Ads MCP tool, set `status='posted'` + `posted_at`.~~ **DONE — see section 14.**
-- Image generation — `generator.generate_image` is a stub returning `None`. Wire via Auto mode across Grok, Gemini, ChatGPT when ready.
+- **Image generation** — `generator.generate_image` is a stub returning `None`. Wire via Auto mode across Grok, Gemini, ChatGPT when ready. **Next session.**
+- Instagram publishing — 2-step Graph flow (`POST /{ig-user-id}/media` then `POST /{ig-user-id}/media_publish`). Needs the IG business account id linked to the BICCU page. Deferred from V2.
+- LinkedIn publishing — deferred from V2.
+- Per-brand `meta_page_id` — currently a single `META_PAGE_ID` env var (BICCU only). To support multiple brands' Facebook pages, store `meta_page_id` in each brand's `config.json` / `brands` table row and pass it through `meta_publisher`.
 
 ---
 
@@ -294,7 +297,32 @@ Kenneth's ask: Nova should ask who to generate for and which platforms, instead 
 
 Approved Facebook drafts can be published immediately or scheduled to the brand's Facebook Page directly via the Meta Graph API. No MCP plugin — direct Graph calls. Instagram + LinkedIn are deferred (V2.1).
 
-**Verified live 2026-07-05:** content item 13 (approved BICCU facebook draft) scheduled via `POST /publish` with `scheduled_for` 25 min out. Meta returned post id `120368170965_1702865025176333`; confirmed present in the page's `scheduled_posts` edge with the correct message + `scheduled_publish_time`. DB updated to `status='scheduled'`, `meta_post_id` + `scheduled_for` populated. `/meta/verify` returns `{"page_name": "Bahama Islands Co-operative Credit Union Limited"}`.
+**Verified live 2026-07-05:**
+- `/meta/verify` → `{"page_name": "Bahama Islands Co-operative Credit Union Limited"}`
+- **Schedule test:** content item 13 scheduled via `POST /publish` with `scheduled_for` 25 min out. Meta returned post id `120368170965_1702865025176333`; confirmed present in the page's `scheduled_posts` edge. DB `status='scheduled'`, `meta_post_id` + `scheduled_for` populated.
+- **Publish-now test (from Slack):** content item 15 published via the "Publish now" button on the approved draft message. DB `status='posted'`, `meta_post_id` set, `posted_at` set. Post live on the BICCU page.
+- **Schedule test (from Slack):** content item 16 scheduled via "Schedule" → datetimepicker → "Confirm schedule". DB `status='scheduled'`, `meta_post_id` + `scheduled_for` set.
+
+### Slack `/nova` slash command (V2)
+
+`/nova` triggers the interactive generation flow from inside Slack (no curl needed). Configure in Slack app settings → Slash Commands → `/nova` → Request URL `https://nova-production-14f6.up.railway.app/slack/commands`.
+
+| Command | Effect |
+| --- | --- |
+| `/nova` or `/nova generate` | post brand picker to `#nova-agent` |
+| `/nova help` | ephemeral help text |
+
+The brand picker lands in `SLACK_CONTENT_CHANNEL` so the rest of the flow (platform picker, drafts, approvals, publish buttons) stays in one channel.
+
+### Bug fixes applied during V2 verification
+
+1. **Approve/Reject silent failure** — the approve handler returned `replace_original` from an `async` endpoint doing synchronous DB calls. If the DB call pushed past Slack's 3s window, Slack dropped the message update (DB flipped to approved but Slack kept showing Approve/Reject). Fixed by switching to background-task + `chat.update` pattern.
+2. **Publish button value parsing** — `publish_now_15` has two underscores but the handler used `split("_", 1)` (splits on first), giving `["publish", "now_15"]` → `int("now_15")` → ValueError → 400. Fixed with `rsplit("_", 1)` (splits on last).
+3. **Schedule silent failure** — `publish_schedule` and `publish_confirm` used `replace_original` synchronously. Same timing issue as #1. Fixed by converting both to the background-task + `chat.update` pattern.
+4. **Publish-now race condition** — handler returned `replace_original` with "Publishing..." AND started a background task with `chat.update` for the final status. The two could race, leaving the message stuck on "Publishing...". Fixed by converting to pure background-task pattern (no `replace_original`).
+5. **Schedule picker hint persisted** — the "Pick a time to schedule..." section block stayed in the message after scheduling completed. Fixed by tagging it with `block_id: "schedule_picker_hint"` and stripping that block in `format_publish_result_blocks`.
+
+**Pattern locked in:** all Slack interaction handlers now ack with `{"ok": True}` immediately and do DB + Graph API + message updates in `BackgroundTasks`. No handler relies on `replace_original` for critical state changes.
 
 ### Endpoints (new)
 
@@ -316,12 +344,15 @@ Non-facebook approved drafts keep the pre-V2 "ready for manual posting" line (no
 ```
 schema.sql                              + meta_post_id TEXT, published_via TEXT DEFAULT 'meta_graph'
 app/core/meta_publisher.py              publish_page_post / schedule_page_post / verify_token
+app/core/slack_verify.py                shared HMAC-SHA256 signature verifier (used by slash commands)
 app/core/db.py                          get_content_item; update_status extended (meta_post_id, scheduled_for)
 app/core/slack_client.py                format_resolved_approval_blocks now appends Publish/Schedule buttons
                                         + format_schedule_picker_blocks, format_publish_result_blocks, update_message
 app/routes/publish.py                   POST /publish + GET /meta/verify (X-Cron-Secret gated)
-app/routes/slack_interactions.py        publish_now / publish_schedule / publish_confirm / publish_dt_* handlers
-app/main.py                             publish_router registered; version 1.3.0
+app/routes/slack_commands.py            POST /slack/commands — /nova slash command
+app/routes/slack_interactions.py        approve/reject + publish_now / publish_schedule / publish_confirm handlers
+                                        (all background-task + chat.update pattern)
+app/main.py                             publish_router + slack_commands_router registered; version 1.4.0
 ```
 
 ### Environment variables (new in V2)
