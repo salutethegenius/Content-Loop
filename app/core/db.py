@@ -3,12 +3,10 @@ from datetime import datetime, timezone
 
 import psycopg2
 
-DATABASE_URL = os.environ["DATABASE_URL"]
-
 
 def get_conn():
     """Open a new Postgres connection. Caller is responsible for closing it."""
-    return psycopg2.connect(DATABASE_URL)
+    return psycopg2.connect(os.environ["DATABASE_URL"])
 
 
 def save_draft(brand_id, platform, draft_text):

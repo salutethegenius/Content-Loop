@@ -11,12 +11,12 @@ from core.db import update_status
 
 router = APIRouter()
 
-SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET", "")
 REPLAY_TOLERANCE_SECONDS = 60 * 5
 
 
 def _verify_slack_signature(timestamp: str, signature: str, body: bytes) -> bool:
-    if not SLACK_SIGNING_SECRET or not timestamp or not signature:
+    signing_secret = os.environ.get("SLACK_SIGNING_SECRET", "")
+    if not signing_secret or not timestamp or not signature:
         return False
 
     try:
@@ -29,7 +29,7 @@ def _verify_slack_signature(timestamp: str, signature: str, body: bytes) -> bool
 
     base = f"v0:{timestamp}:".encode() + body
     expected = "v0=" + hmac.new(
-        SLACK_SIGNING_SECRET.encode(), base, hashlib.sha256
+        signing_secret.encode(), base, hashlib.sha256
     ).hexdigest()
 
     return hmac.compare_digest(expected, signature)

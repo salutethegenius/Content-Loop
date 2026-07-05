@@ -4,8 +4,6 @@ import anthropic
 
 from core.brand_loader import load_voice
 
-client = anthropic.Anthropic()  # ANTHROPIC_API_KEY from env
-
 MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
 
@@ -20,6 +18,7 @@ def generate_draft(brand_config, platform):
         "Return only the post copy, nothing else. No preamble, no quotes."
     )
 
+    client = anthropic.Anthropic()  # ANTHROPIC_API_KEY read from env at call time
     response = client.messages.create(
         model=MODEL,
         max_tokens=500,

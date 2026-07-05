@@ -2,14 +2,14 @@ import os
 
 import requests
 
-SLACK_BOT_TOKEN = os.environ["SLACK_BOT_TOKEN"]
-SLACK_CHANNEL = os.environ["SLACK_CONTENT_CHANNEL"]
-
 SLACK_POST_URL = "https://slack.com/api/chat.postMessage"
 
 
 def post_for_approval(item_id, brand_name, platform, draft_text):
     """Post a draft to Slack with Approve/Reject buttons. Returns the message ts."""
+    bot_token = os.environ["SLACK_BOT_TOKEN"]
+    channel = os.environ["SLACK_CONTENT_CHANNEL"]
+
     blocks = [
         {
             "type": "section",
@@ -41,9 +41,9 @@ def post_for_approval(item_id, brand_name, platform, draft_text):
 
     resp = requests.post(
         SLACK_POST_URL,
-        headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+        headers={"Authorization": f"Bearer {bot_token}"},
         json={
-            "channel": SLACK_CHANNEL,
+            "channel": channel,
             "blocks": blocks,
             "text": f"New draft for {brand_name} on {platform}",
         },
