@@ -52,3 +52,25 @@ def post_for_approval(item_id, brand_name, platform, draft_text):
     if not data.get("ok"):
         raise RuntimeError(f"Slack post_for_approval failed: {data}")
     return data["ts"]
+
+
+def post_message(channel, text=None, blocks=None, thread_ts=None):
+    """Post a generic message (optionally threaded) and return its ts."""
+    bot_token = os.environ["SLACK_BOT_TOKEN"]
+    payload = {"channel": channel}
+    if text:
+        payload["text"] = text
+    if blocks:
+        payload["blocks"] = blocks
+    if thread_ts:
+        payload["thread_ts"] = thread_ts
+
+    resp = requests.post(
+        SLACK_POST_URL,
+        headers={"Authorization": f"Bearer {bot_token}"},
+        json=payload,
+    )
+    data = resp.json()
+    if not data.get("ok"):
+        raise RuntimeError(f"Slack post_message failed: {data}")
+    return data["ts"]

@@ -5,9 +5,11 @@ import os
 import time
 from urllib.parse import parse_qs
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
+from core import db, onboarding
 from core.db import update_status
+from core.slack_client import post_message
 
 router = APIRouter()
 
@@ -18,26 +20,28 @@ def _verify_slack_signature(timestamp: str, signature: str, body: bytes) -> bool
     signing_secret = os.environ.get("SLACK_SIGNING_SECRET", "")
     if not signing_secret or not timestamp or not signature:
         return False
-
     try:
         ts_int = int(timestamp)
     except (TypeError, ValueError):
         return False
-
     if abs(time.time() - ts_int) > REPLAY_TOLERANCE_SECONDS:
         return False
-
     base = f"v0:{timestamp}:".encode() + body
     expected = "v0=" + hmac.new(
         signing_secret.encode(), base, hashlib.sha256
     ).hexdigest()
-
     return hmac.compare_digest(expected, signature)
 
 
 @router.post("/slack/interactions")
-async def handle_interaction(request: Request):
-    """Handle Approve/Reject button clicks from Slack."""
+async def handle_interaction(request: Request, background_tasks: BackgroundTasks):
+    """Handle Approve/Reject button clicks from Slack.
+
+    Two action families share this endpoint:
+    - Content approval: action_id `approve`/`reject`, value `{action}_{item_id}`.
+    - Onboarding approval: action_id `onboard_approve`/`onboard_reject`/
+      `onboard_regenerate`, value `brand_id`.
+    """
     raw_body = await request.body()
     timestamp = request.headers.get("X-Slack-Request-Timestamp", "")
     signature = request.headers.get("X-Slack-Signature", "")
@@ -58,16 +62,86 @@ async def handle_interaction(request: Request):
     action = actions[0]
     action_id = action.get("action_id")
     value = action.get("value", "")
-    try:
-        item_id = int(value.split("_", 1)[1])
-    except (IndexError, ValueError):
-        raise HTTPException(status_code=400, detail="Bad action value")
+    channel = payload.get("channel", {}).get("id")
+    thread_ts = payload.get("message", {}).get("thread_ts")
 
-    if action_id == "approve":
-        update_status(item_id, "approved")
-    elif action_id == "reject":
-        update_status(item_id, "rejected")
-    else:
-        raise HTTPException(status_code=400, detail=f"Unknown action: {action_id}")
+    # --- Content approval actions ---
+    if action_id in ("approve", "reject"):
+        try:
+            item_id = int(value.split("_", 1)[1])
+        except (IndexError, ValueError):
+            raise HTTPException(status_code=400, detail="Bad action value")
+        update_status(item_id, "approved" if action_id == "approve" else "rejected")
+        return {"ok": True}
 
-    return {"ok": True}
+    # --- Onboarding actions (defer slow work to background) ---
+    if action_id in ("onboard_approve", "onboard_reject", "onboard_regenerate"):
+        brand_id = value
+        background_tasks.add_task(
+            _handle_onboarding_action, action_id, brand_id, channel, thread_ts
+        )
+        return {"ok": True}
+
+    raise HTTPException(status_code=400, detail=f"Unknown action: {action_id}")
+
+
+def _handle_onboarding_action(action_id, brand_id, channel, thread_ts):
+    session = db.get_onboarding_session(brand_id)
+    if not session:
+        return
+
+    if action_id == "onboard_approve":
+        if not session.get("draft_voice_md") or not session.get("draft_config"):
+            post_message(
+                channel,
+                text="No draft on file. Click Regenerate first.",
+                thread_ts=thread_ts,
+            )
+            return
+        db.upsert_brand(brand_id, session["draft_config"], session["draft_voice_md"])
+        db.set_onboarding_status(brand_id, "approved")
+        db.set_onboarding_phase(brand_id, "done")
+        post_message(
+            channel,
+            text=(
+                f"Approved. {session['display_name']} is now live in the content loop. "
+                f"It will be picked up on the next cron run."
+            ),
+            thread_ts=thread_ts,
+        )
+        return
+
+    if action_id == "onboard_reject":
+        db.set_onboarding_status(brand_id, "rejected")
+        post_message(
+            channel,
+            text="Rejected. Reply in this thread with what to change, then click Regenerate.",
+            thread_ts=thread_ts,
+        )
+        return
+
+    if action_id == "onboard_regenerate":
+        try:
+            # Pull any replies posted since the last draft (status was
+            # awaiting_approval) into the answers before re-synthesizing.
+            answers = session["answers"]
+            voice_md, config = onboarding.synthesize_brand(
+                brand_id, session["display_name"], answers
+            )
+            db.save_onboarding_draft(brand_id, voice_md, config)
+            db.set_onboarding_status(brand_id, "in_progress")
+            blocks = onboarding.format_draft_message(
+                brand_id, session["display_name"], voice_md, config
+            )
+            post_message(
+                channel,
+                blocks=blocks,
+                thread_ts=thread_ts,
+                text=f"Regenerated draft for {session['display_name']}",
+            )
+        except Exception as exc:
+            post_message(
+                channel,
+                text=f"Regeneration failed: {exc}",
+                thread_ts=thread_ts,
+            )

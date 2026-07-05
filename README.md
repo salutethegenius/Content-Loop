@@ -58,10 +58,42 @@ uvicorn app.main:app --reload --port 8000
 ## Manual setup checklist (steps the code does not do for you)
 
 1. **Database** - run `schema.sql` on Railway Postgres: `psql "$DATABASE_URL" -f schema.sql`.
-2. **Slack app** - create a Slack app, give the bot `chat:write`, invite the bot to the approval channel, enable Interactivity, and point the Request URL at `https://{railway-domain}/slack/interactions`. Copy the signing secret into `SLACK_SIGNING_SECRET`.
+2. **Slack app** - create a Slack app with the scopes and endpoints below.
 3. **Railway deploy** - connect this repo, set all env vars, deploy.
 4. **Smoke test** - manually POST `/cron/generate` with header `X-Cron-Secret: <value>` and confirm a draft appears in Slack and Approve/Reject update `content_items.status`.
 5. **Railway cron** - in the Railway dashboard, add a cron trigger that hits `POST /cron/generate` with the `X-Cron-Secret` header on your chosen schedule.
+
+### Slack app configuration
+
+**Bot Token Scopes (OAuth & Permissions):**
+- `chat:write` - post drafts and onboarding messages.
+- `app_mentions:read` - optional, if you want to trigger flows by mentioning the bot.
+
+**Event Subscriptions (Interactivity & Shortcuts + Event Subscriptions):**
+- Enable **Interactivity**, Request URL: `https://{railway-domain}/slack/interactions`
+- Enable **Event Subscriptions**, Request URL: `https://{railway-domain}/slack/events`
+- Subscribe to bot events: `message.channels` (so onboarding thread replies reach the app)
+
+**In Slack:**
+- Invite the bot to the content approval channel: `/invite @Content Loop`
+- Invite the bot to any channel where you want to run onboarding threads.
+
+Copy the **Signing Secret** into `SLACK_SIGNING_SECRET` and the **Bot User OAuth Token** (`xoxb-...`) into `SLACK_BOT_TOKEN`.
+
+## Onboarding a new brand via Slack
+
+Run Nova's onboarding interview to generate a brand's `voice.md` and `config.json` from the business's own answers. The output lands in the `brands` table and is immediately live in the content loop (no file write, no git commit).
+
+```bash
+curl -X POST -H "X-Cron-Secret: <value>" \
+  -H "Content-Type: application/json" \
+  -d '{"brand_id":"drewber","display_name":"Drewber Solutions","channel":"C0XXXXX"}' \
+  https://{railway-domain}/onboard/start
+```
+
+Nova posts a welcome message + Phase 1 questions into a new thread in the channel. The business replies in the thread (one or several messages), then types `next` to advance. Six phases: identity, voice, content territory, compliance, platform behavior, cadence. After Phase 6, Nova synthesizes a `voice.md` + `config.json` via Claude and posts it with Approve / Reject / Regenerate buttons. Approve persists the brand and it appears in the next cron run.
+
+To restart an onboarding for a brand, hit `/onboard/start` again with the same `brand_id` - the session resets.
 
 ## V1 done state
 
@@ -75,5 +107,5 @@ Approved items sit in `content_items` with `status = 'approved'`. You post them 
 ## Open items for Kenneth
 
 - Confirm posting cadence per brand. Currently defaulted to `3` days in each `config.json`.
-- Decide whether Edit reopens a Slack modal or picks up a thread reply. V1 ships Approve/Reject only.
-- Image generation: stub now, wire in a later pass.
+- Edit button behavior: onboarding uses Regenerate (re-runs Claude on the accumulated answers). Content approval is Approve/Reject only.
+- Image generation: stubbed now, wire in a later pass.

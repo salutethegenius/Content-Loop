@@ -6,23 +6,56 @@ BRANDS_DIR = os.path.join(os.path.dirname(__file__), "..", "brands")
 
 
 def get_active_brands():
-    """Return configs for every brand folder with active: true."""
+    """Return configs for every active brand.
+
+    DB-backed brands (created via onboarding) take precedence. Filesystem
+    brands under app/brands/{brand}/ are the seed/fallback. A brand present
+    in both is served from the DB so onboarding edits win.
+    """
     brands = []
-    if not os.path.isdir(BRANDS_DIR):
-        return brands
-    for folder in sorted(os.listdir(BRANDS_DIR)):
-        config_path = os.path.join(BRANDS_DIR, folder, "config.json")
-        if not os.path.exists(config_path):
-            continue
-        with open(config_path) as f:
-            config = json.load(f)
-        if config.get("active"):
-            brands.append(config)
+    seen = set()
+
+    # 1. DB-backed brands.
+    try:
+        from core import db as _db
+        for config in _db.list_db_brands():
+            if config.get("active") and config.get("brand_id") not in seen:
+                brands.append(config)
+                seen.add(config["brand_id"])
+    except Exception:
+        # DB not reachable / not configured: fall through to filesystem.
+        pass
+
+    # 2. Filesystem brands not already in DB.
+    if os.path.isdir(BRANDS_DIR):
+        for folder in sorted(os.listdir(BRANDS_DIR)):
+            config_path = os.path.join(BRANDS_DIR, folder, "config.json")
+            if not os.path.exists(config_path):
+                continue
+            with open(config_path) as f:
+                config = json.load(f)
+            if config.get("active") and config.get("brand_id") not in seen:
+                brands.append(config)
+                seen.add(config["brand_id"])
+
     return brands
 
 
 def load_voice(brand_id):
-    """Return the raw markdown system prompt for a brand."""
+    """Return the raw markdown system prompt for a brand.
+
+    DB-backed voice wins; falls back to app/brands/{brand}/voice.md on disk.
+    """
+    try:
+        from core import db as _db
+        result = _db.get_brand_from_db(brand_id)
+        if result is not None:
+            _config, voice_md = result
+            if voice_md:
+                return voice_md
+    except Exception:
+        pass
+
     voice_path = os.path.join(BRANDS_DIR, brand_id, "voice.md")
     with open(voice_path) as f:
         return f.read()
