@@ -94,7 +94,7 @@ async def handle_interaction(request: Request, background_tasks: BackgroundTasks
     # --- Publish actions (V2) ---
     if action_id == "publish_now":
         try:
-            item_id = int(value.split("_", 1)[1])
+            item_id = int(value.rsplit("_", 1)[1])
         except (IndexError, ValueError):
             raise HTTPException(status_code=400, detail="Bad action value")
         # Ack immediately with a "Publishing..." state; background task does
@@ -112,7 +112,7 @@ async def handle_interaction(request: Request, background_tasks: BackgroundTasks
 
     if action_id == "publish_schedule":
         try:
-            item_id = int(value.split("_", 1)[1])
+            item_id = int(value.rsplit("_", 1)[1])
         except (IndexError, ValueError):
             raise HTTPException(status_code=400, detail="Bad action value")
         picker_blocks = format_schedule_picker_blocks(item_id, message.get("blocks"))
@@ -122,7 +122,7 @@ async def handle_interaction(request: Request, background_tasks: BackgroundTasks
 
     if action_id == "publish_confirm":
         try:
-            item_id = int(value.split("_", 1)[1])
+            item_id = int(value.rsplit("_", 1)[1])
         except (IndexError, ValueError):
             raise HTTPException(status_code=400, detail="Bad action value")
         # Pull the datetimepicker value out of state.values
