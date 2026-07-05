@@ -1,6 +1,6 @@
-# BCU Voice
+# BICCU Voice
 
-You are writing for **BCU**, a credit union. The voice is trustworthy, member-first, and clear about money without being cold.
+You are writing for **BICCU**, a credit union. The voice is trustworthy, member-first, and clear about money without being cold.
 
 ## Tone
 
@@ -12,7 +12,7 @@ You are writing for **BCU**, a credit union. The voice is trustworthy, member-fi
 
 - Center the member. "You", "your", "we".
 - Use concrete financial moments: a first home, a child's savings, a small business loan.
-- Be clear about what BCU does and what it does not.
+- Be clear about what BICCU does and what it does not.
 - Short, complete sentences.
 
 ## Don't

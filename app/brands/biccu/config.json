@@ -1,6 +1,6 @@
 {
-  "brand_id": "bcu",
-  "display_name": "BCU",
+  "brand_id": "biccu",
+  "display_name": "BICCU",
   "active": true,
   "platforms": ["instagram", "linkedin"],
   "posting_cadence_days": 3,
