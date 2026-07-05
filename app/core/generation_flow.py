@@ -1,5 +1,6 @@
 """Interactive Slack flow: pick brand, pick platforms, generate targeted drafts."""
 
+from core import db
 from core.brand_loader import get_brand_by_id
 from core.content_loop import generate_for_platforms
 from core.slack_client import post_message
@@ -116,6 +117,51 @@ def format_platform_picker_blocks(brand):
     return blocks
 
 
+def format_onboard_prompt_blocks(brand):
+    """Slack blocks prompting the user to onboard a not-yet-onboarded brand.
+
+    Shown in place of the platform picker when a brand only exists as a
+    filesystem seed (no row in the `brands` table). The user can either
+    start onboarding right here, or force a one-off generation with the
+    fallback prompt.
+    """
+    brand_id = brand["brand_id"]
+    display_name = brand["display_name"]
+    return [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"*{display_name}* hasn't been onboarded yet.\n"
+                    "Without onboarding, Nova has no voice.md or content "
+                    "pillars for this brand, so drafts will be generic and "
+                    "off-voice. Onboard now to set the voice, pillars, "
+                    "compliance rules, and cadence."
+                ),
+            },
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "style": "primary",
+                    "text": {"type": "plain_text", "text": "Onboard now"},
+                    "value": brand_id,
+                    "action_id": f"gen_onboard_{brand_id}",
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Generate anyway"},
+                    "value": brand_id,
+                    "action_id": f"gen_force_pick_{brand_id}",
+                },
+            ],
+        },
+    ]
+
+
 def parse_confirm_value(value):
     """Parse gen_confirm button value: brand_id:facebook,instagram."""
     brand_id, _, platforms_str = value.partition(":")
@@ -124,7 +170,13 @@ def parse_confirm_value(value):
 
 
 def handle_pick_brand(brand_id, channel, thread_ts):
-    """Post platform picker after a brand is selected."""
+    """Post platform picker after a brand is selected, gated on onboarding.
+
+    If the brand has not been onboarded (no row in `brands`), post an
+    Onboard-now prompt instead of the platform picker. The user can still
+    bypass via the "Generate anyway" button, which calls
+    `handle_force_pick_brand`.
+    """
     brand = get_brand_by_id(brand_id)
     if not brand:
         post_message(
@@ -133,6 +185,46 @@ def handle_pick_brand(brand_id, channel, thread_ts):
             thread_ts=thread_ts,
         )
         return
+
+    try:
+        onboarded = db.is_onboarded(brand_id)
+    except Exception:
+        # DB unreachable: fall through to the platform picker so a DB
+        # outage doesn't block generation entirely.
+        onboarded = True
+
+    if not onboarded:
+        blocks = format_onboard_prompt_blocks(brand)
+        post_message(
+            channel,
+            blocks=blocks,
+            thread_ts=thread_ts,
+            text=f"{brand['display_name']} needs onboarding first.",
+        )
+        return
+
+    _post_platform_picker(brand, channel, thread_ts)
+
+
+def handle_force_pick_brand(brand_id, channel, thread_ts):
+    """Bypass the onboarding gate and post the platform picker directly.
+
+    Triggered by the 'Generate anyway' button on the onboarding prompt.
+    Keeps the previous capability (fallback-prompt drafts for seed brands)
+    available behind an explicit confirmation.
+    """
+    brand = get_brand_by_id(brand_id)
+    if not brand:
+        post_message(
+            channel,
+            text=f"Brand `{brand_id}` not found or inactive.",
+            thread_ts=thread_ts,
+        )
+        return
+    _post_platform_picker(brand, channel, thread_ts)
+
+
+def _post_platform_picker(brand, channel, thread_ts):
     blocks = format_platform_picker_blocks(brand)
     post_message(
         channel,

@@ -158,6 +158,20 @@ async def handle_interaction(request: Request, background_tasks: BackgroundTasks
         )
         return {"ok": True}
 
+    if action_id and action_id.startswith("gen_force_pick_"):
+        brand_id = value.strip().lower()
+        background_tasks.add_task(
+            generation_flow.handle_force_pick_brand, brand_id, channel, thread_ts
+        )
+        return {"ok": True}
+
+    if action_id and action_id.startswith("gen_onboard_"):
+        brand_id = value.strip().lower()
+        background_tasks.add_task(
+            _handle_onboard_from_picker, brand_id, channel, thread_ts
+        )
+        return {"ok": True}
+
     if action_id and action_id.startswith("gen_confirm_"):
         brand_id, platforms = generation_flow.parse_confirm_value(value)
         background_tasks.add_task(
@@ -228,6 +242,55 @@ def _handle_onboarding_action(action_id, brand_id, channel, thread_ts):
                 text=f"Regeneration failed: {exc}",
                 thread_ts=thread_ts,
             )
+
+
+def _handle_onboard_from_picker(brand_id, channel, thread_ts):
+    """Background task: start a Nova onboarding flow for a brand the user
+    picked from the `/nova` brand picker but hasn't onboarded yet.
+
+    Opens a fresh top-level welcome message in the same channel and runs
+    the onboarding there (re-using the same code path as `POST /onboard/start`).
+    Replies in the picker thread with a pointer so the user knows where to go.
+    """
+    from core import onboarding as _onboarding
+    from core.brand_loader import get_brand_by_id
+
+    brand = get_brand_by_id(brand_id)
+    if not brand:
+        post_message(
+            channel,
+            text=f"Brand `{brand_id}` not found or inactive.",
+            thread_ts=thread_ts,
+        )
+        return
+
+    display_name = brand.get("display_name") or brand_id
+    try:
+        new_thread_ts = _onboarding.start_session(brand_id, display_name, channel)
+    except Exception as exc:
+        post_message(
+            channel,
+            text=f"Could not start onboarding for {display_name}: {exc}",
+            thread_ts=thread_ts,
+        )
+        return
+
+    if not new_thread_ts:
+        post_message(
+            channel,
+            text=f"Could not start onboarding for {display_name} (Slack post failed).",
+            thread_ts=thread_ts,
+        )
+        return
+
+    post_message(
+        channel,
+        text=(
+            f"Started onboarding for {display_name} in a new thread above. "
+            f"Reply there to answer Nova's questions."
+        ),
+        thread_ts=thread_ts,
+    )
 
 
 def _handle_approval(item_id, status, user_id, channel, message_ts,

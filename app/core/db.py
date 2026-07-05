@@ -184,6 +184,23 @@ def list_db_brands():
         conn.close()
 
 
+def is_onboarded(brand_id):
+    """True if a brand has a row in the `brands` table.
+
+    Only brands that have been through Nova onboarding and approved land in
+    `brands`. Filesystem-only seed brands (e.g. drewber, kgc before onboarding)
+    return False, which lets the interactive generation flow prompt the user
+    to onboard instead of silently generating with the fallback prompt.
+    """
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM brands WHERE brand_id = %s", (brand_id,))
+            return cur.fetchone() is not None
+    finally:
+        conn.close()
+
+
 # --- Onboarding sessions ---
 
 

@@ -11,6 +11,7 @@ import os
 import anthropic
 
 from core import db
+from core.slack_client import post_message
 
 MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
@@ -131,6 +132,31 @@ def format_phase_message(display_name, phase_key):
         f"{numbered}\n\n"
         f"_Reply with your answers in this thread. When you are done, type `next` to move on._"
     )
+
+
+def start_session(brand_id, display_name, channel):
+    """Open a Nova onboarding thread in `channel` for a new brand.
+
+    Posts the welcome message as a top-level message in the channel, posts
+    phase 1 as the first threaded reply, and persists the session row so
+    Slack Events replies in that thread drive the conversation forward.
+
+    Returns the new thread_ts (or None if the welcome post failed).
+    """
+    welcome = (
+        f"*Nova onboarding for {display_name}*\n"
+        f"Hi! I'm Nova. I'll ask a few batches of questions to learn your brand's "
+        f"voice and content territory. Reply in this thread, and type `next` when "
+        f"you are ready to move on. At the end I'll draft your voice.md and "
+        f"config.json for approval."
+    )
+    thread_ts = post_message(channel, text=welcome)
+    if not thread_ts:
+        return None
+    phase_msg = format_phase_message(display_name, "identity")
+    post_message(channel, text=phase_msg, thread_ts=thread_ts)
+    db.create_onboarding_session(brand_id, display_name, channel, thread_ts)
+    return thread_ts
 
 
 def format_draft_message(brand_id, display_name, voice_md, config):
