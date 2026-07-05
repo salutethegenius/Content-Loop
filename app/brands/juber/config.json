@@ -1,0 +1,8 @@
+{
+  "brand_id": "juber",
+  "display_name": "Juber",
+  "active": true,
+  "platforms": ["instagram", "linkedin"],
+  "posting_cadence_days": 3,
+  "image_style_prompt": "warm, human, documentary-style, natural light"
+}
