@@ -115,10 +115,13 @@ async def handle_interaction(request: Request, background_tasks: BackgroundTasks
             item_id = int(value.rsplit("_", 1)[1])
         except (IndexError, ValueError):
             raise HTTPException(status_code=400, detail="Bad action value")
-        picker_blocks = format_schedule_picker_blocks(item_id, message.get("blocks"))
-        return JSONResponse(
-            content={"replace_original": True, "blocks": picker_blocks}
+        # Ack immediately; background task swaps in the datetimepicker via
+        # chat.update so a slow response can't cause Slack to drop it.
+        background_tasks.add_task(
+            _handle_show_schedule_picker, item_id, channel, message.get("ts"),
+            message.get("blocks"),
         )
+        return {"ok": True}
 
     if action_id == "publish_confirm":
         try:
@@ -128,25 +131,17 @@ async def handle_interaction(request: Request, background_tasks: BackgroundTasks
         # Pull the datetimepicker value out of state.values
         selected_ts = _extract_datetimepicker_value(payload, item_id)
         if not selected_ts:
-            return JSONResponse(
-                content={
-                    "replace_original": True,
-                    "blocks": format_publish_result_blocks(
-                        message.get("blocks"),
-                        ":x: No time selected. Click Schedule again.",
-                    ),
-                }
+            background_tasks.add_task(
+                _handle_schedule_error, channel, message.get("ts"),
+                message.get("blocks"),
+                ":x: No time selected. Click Schedule again.",
             )
-        intermediate = format_publish_result_blocks(
-            message.get("blocks"), ":clock1: Scheduling on Facebook..."
-        )
+            return {"ok": True}
         background_tasks.add_task(
             _handle_publish_schedule, item_id, selected_ts,
             channel, message.get("ts"), message.get("blocks"),
         )
-        return JSONResponse(
-            content={"replace_original": True, "blocks": intermediate}
-        )
+        return {"ok": True}
 
     # datetimepicker change events — Slack still requires a 200 ack
     if action_id and action_id.startswith("publish_dt_"):
@@ -277,6 +272,29 @@ def _extract_datetimepicker_value(payload, item_id):
     return None
 
 
+def _handle_show_schedule_picker(item_id, channel, message_ts, original_blocks):
+    """Background task: swap the draft message in place to show the
+    datetimepicker + Confirm schedule button."""
+    picker_blocks = format_schedule_picker_blocks(item_id, original_blocks)
+    try:
+        update_message(channel, message_ts, blocks=picker_blocks)
+    except Exception as exc:
+        post_message(
+            channel,
+            text=f"(could not show schedule picker: {exc})",
+            thread_ts=message_ts,
+        )
+
+
+def _handle_schedule_error(channel, message_ts, original_blocks, status_text):
+    """Background task: show a schedule error message in place."""
+    blocks = format_publish_result_blocks(original_blocks, status_text)
+    try:
+        update_message(channel, message_ts, blocks=blocks)
+    except Exception:
+        pass
+
+
 def _handle_publish_now(item_id, channel, message_ts, original_blocks):
     """Background task: publish an approved facebook draft via the Meta Graph
     API, then flip the Slack message to a final status line."""
@@ -377,6 +395,17 @@ def _handle_publish_schedule(item_id, selected_ts, channel, message_ts,
     # for scheduled_publish_time, but our meta_publisher takes an ISO string.
     scheduled_dt = datetime.fromtimestamp(selected_ts, tz=timezone.utc)
     iso = scheduled_dt.isoformat()
+
+    # Show an intermediate "Scheduling..." state so the user sees feedback.
+    try:
+        update_message(
+            channel, message_ts,
+            blocks=format_publish_result_blocks(
+                original_blocks, ":clock1: Scheduling on Facebook..."
+            ),
+        )
+    except Exception:
+        pass
 
     try:
         meta_post_id = meta_publisher.schedule_page_post(item["draft_text"], iso)
