@@ -81,26 +81,15 @@ async def handle_interaction(request: Request, background_tasks: BackgroundTasks
         except (IndexError, ValueError):
             raise HTTPException(status_code=400, detail="Bad action value")
         status = "approved" if action_id == "approve" else "rejected"
-        update_status(item_id, status)
         user_id = (payload.get("user") or {}).get("id")
-
-        # Load the item so the formatter knows whether to surface publish
-        # buttons (V2: facebook only). Safe to skip on miss — falls back to
-        # the pre-V2 "ready for manual posting" line.
-        item = db.get_content_item(item_id)
-        platform = item.get("platform") if item else None
-
-        updated_blocks = format_resolved_approval_blocks(
-            message.get("blocks"), status, user_id,
-            item_id=item_id, platform=platform,
+        # Ack immediately (Slack needs a response within 3s). The DB update +
+        # in-place message update happen in a background task so a slow DB
+        # connection can't cause Slack to silently drop the replace_original.
+        background_tasks.add_task(
+            _handle_approval, item_id, status, user_id,
+            channel, message.get("ts"), message.get("blocks"),
         )
-        return JSONResponse(
-            content={
-                "replace_original": True,
-                "blocks": updated_blocks,
-                "text": message.get("text") or f"Draft {status}",
-            }
-        )
+        return {"ok": True}
 
     # --- Publish actions (V2) ---
     if action_id == "publish_now":
@@ -249,6 +238,30 @@ def _handle_onboarding_action(action_id, brand_id, channel, thread_ts):
                 text=f"Regeneration failed: {exc}",
                 thread_ts=thread_ts,
             )
+
+
+def _handle_approval(item_id, status, user_id, channel, message_ts,
+                     original_blocks):
+    """Background task: update content_items status and replace the Slack
+    draft message in place with the resolved status line (+ Publish/Schedule
+    buttons for approved facebook drafts)."""
+    update_status(item_id, status)
+    item = db.get_content_item(item_id)
+    platform = item.get("platform") if item else None
+    updated_blocks = format_resolved_approval_blocks(
+        original_blocks, status, user_id,
+        item_id=item_id, platform=platform,
+    )
+    try:
+        update_message(channel, message_ts, blocks=updated_blocks)
+    except Exception as exc:
+        # Don't surface Slack failures to the user — the DB status is already
+        # correct, which is the source of truth. Log via a thread reply.
+        post_message(
+            channel,
+            text=f"(approval recorded in DB, but Slack message update failed: {exc})",
+            thread_ts=message_ts,
+        )
 
 
 def _extract_datetimepicker_value(payload, item_id):
