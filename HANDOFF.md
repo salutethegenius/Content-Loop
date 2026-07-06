@@ -606,7 +606,16 @@ Per Generate image click: one Claude Sonnet call, ~500-1000 tokens output. ~$0.0
 
 ### Known V1.7 risks to watch
 
-- **cairosvg + foreignObject**: the supporting paragraph, info card text, and CTA use `<foreignObject>` with simple inline HTML for auto-wrap. cairosvg supports this via libpango but support can be flaky for non-trivial CSS. If text doesn't render in the first live test, fall back to `<tspan>` with manual line breaks (would require Claude to also pre-break the supporting paragraph into lines).
+- ~~cairosvg + foreignObject~~ — CONFIRMED broken in the first live test; fixed in 1.7.1. All text zones now use `<text>` + `<tspan>` with Python-side wrapping (`_wrap_to_lines` / `_lines_to_tspans` in `image_generator.py`).
 - **Font availability**: the template uses `Arial, Helvetica, sans-serif`. Railway's NIXPACKS base image has DejaVu Sans (a Helvetica-ish fallback) but not Arial itself. The text will render in DejaVu Sans — clean and professional, but not exactly Helvetica. To get closer to the reference, add `fonts-dejavu` or `ttf-mscorefonts-installer` to the aptfile.
-- **First live test**: run `/nova` → BICCU → Facebook → Generate image. The output should match the reference layout (logo top-left, huge headline left, info card, CTA on navy curve, illustration right, footer). Iterate on `template.svg` until it looks right.
+
+### 1.7.1 layout hardening (post-first-live-test fixes)
+
+The first live render exposed three bugs, all fixed:
+
+1. **Headline overlapped logo + illustration.** Fixed 96px font blew past the left column with long lines like "SAVINGS MOMENT". Now `_fit_headline()` in `image_generator.py` computes the font size per render so the longest line always fits the 560px column (caps: 48-100px), and the template takes `HEADLINE_FONT_SIZE` / `HEADLINE_LINE_HEIGHT` / `HEADLINE_START_Y` as tokens. `_normalize_slots` also hard-splits any line a model returns over 16 chars, keeping the emphasis flag on both halves — so ANY model's slot output renders correctly.
+2. **Footer text was blank on live.** Root cause: psycopg2 auto-decodes JSONB columns to dicts, so `json.loads(row[0])` in `db.get_brand_from_db` / `list_db_brands` threw `TypeError`, `get_active_brands` swallowed it and silently fell back to the filesystem seed config — which has no `footer` block. Fixed with `db._config_dict()` accepting both dicts and strings. (This also means live generation had been using the seed config, not the onboarded DB config — the fix restores DB-config precedence everywhere.)
+3. **Dead vertical space + amateur footer.** Supporting paragraph now anchors bottom-up above the info card (`SUPPORTING_PARA_Y` token) so the gap is constant. Footer redesigned as a solid navy bar with an orange top rule, white text, light-blue glyphs — reads as a deliberate brand band instead of a floating white strip. CTA is single-line with auto-fitted font size (`CTA_FONT_SIZE` token) and ellipsis truncation at 46 chars. Supporting paragraph and info card get ellipsis when they exceed their line caps. Headlines are forced UPPERCASE at compose time for consistency.
+
+The logo zone also switched from the full square logo PNG (which had baked-in text rendering too small) to the emblem-only crop + live SVG text for "BICCU / BAHAMA ISLANDS CO-OPERATIVE / CREDIT UNION LIMITED" — crisp at any size.
 

@@ -70,16 +70,18 @@ def build_slot_prompt(brand_config, platform, draft_text, available_illustration
         f"DRAFT TEXT (the source material to distill, do not reuse verbatim):\n\"\"\"\n{draft_text}\n\"\"\"\n\n"
         f"AVAILABLE ILLUSTRATIONS: {illustrations_list}\n\n"
         f"Produce a JSON object with EXACTLY these keys:\n"
-        f"  - headline_lines: array of 2-4 short strings. Punchy, all-caps OK, creative line breaks. "
-        f"Distill the draft's core message into a memorable headline. Each line is one visual line on the image.\n"
+        f"  - headline_lines: array of 2-4 short strings, EACH LINE 14 CHARACTERS OR FEWER "
+        f"(count spaces). Punchy, ALL CAPS, creative line breaks. One word or two short words "
+        f"per line. e.g. [\"SAVE\", \"SMARTER\", \"TOGETHER\"] or [\"THEIR FIRST\", \"SAVINGS\", \"STORY\"]. "
+        f"Distill the draft's core message into a memorable headline.\n"
         f"  - headline_emphasis: array of booleans, same length as headline_lines. "
         f"true = this line gets the Primary Blue emphasis color; false = this line stays Dark Navy. "
-        f"Use emphasis sparingly (1-2 lines true) to create dramatic hierarchy.\n"
-        f"  - supporting_paragraph: 1-2 sentences (max ~220 chars) that elaborate on the headline. "
-        f"Plain text, no hashtags, no emojis.\n"
-        f"  - info_card_text: one short sentence (max ~110 chars) offering help or a next step. "
+        f"Use emphasis on 1-2 lines to create dramatic hierarchy.\n"
+        f"  - supporting_paragraph: 1-2 sentences, 120 to 200 characters total. "
+        f"Elaborates on the headline. Plain text, no hashtags, no emojis.\n"
+        f"  - info_card_text: one short sentence, max 95 characters, offering help or a next step. "
         f"e.g. 'Have questions about savings options at {display_name}? Our team is here to help.'\n"
-        f"  - cta_text: short question or call to action (max ~60 chars), uppercase OK. "
+        f"  - cta_text: short question or call to action, MAX 45 CHARACTERS, uppercase. "
         f"e.g. 'WHAT DOES YOUR SAVINGS ROUTINE LOOK LIKE?'\n"
         f"  - illustration_id: one of the AVAILABLE ILLUSTRATIONS above that best fits the post topic. "
         f"If the list is empty, use the string \"default\".\n\n"
@@ -122,21 +124,37 @@ def generate_slots(prompt, model=None):
 
 def _normalize_slots(slots):
     """Validate + normalize Claude's slots. Pads headline lines to 4, ensures
-    headline_emphasis parallels headline_lines, applies sensible defaults."""
+    headline_emphasis parallels headline_lines, applies sensible defaults.
+    Headlines are forced to uppercase so output is consistent regardless of
+    which model filled the slots."""
     headline_lines = slots.get("headline_lines") or []
-    # Trim to 4 lines, strip whitespace, drop empty trailing lines.
-    headline_lines = [str(line).strip() for line in headline_lines[:4] if str(line).strip()]
-    while len(headline_lines) < 4:
-        headline_lines.append("")
-
-    emphasis = slots.get("headline_emphasis") or []
-    # Normalize to booleans, pad/truncate to match headline_lines length.
-    emphasis_bool = []
-    for i in range(4):
-        if i < len(emphasis):
-            emphasis_bool.append(bool(emphasis[i]))
+    raw_emphasis = slots.get("headline_emphasis") or []
+    # Pair each line with its emphasis flag, trim to 4, drop empties.
+    paired = []
+    for i, line in enumerate(headline_lines[:4]):
+        text = str(line).strip().upper()
+        if text:
+            emp = bool(raw_emphasis[i]) if i < len(raw_emphasis) else False
+            paired.append((text, emp))
+    # Hard-split any line a model made too long (>16 chars) at the space
+    # nearest the middle, so the auto-fit never has to shrink below the
+    # readable minimum. Both halves keep the original emphasis flag.
+    split_pairs = []
+    for text, emp in paired:
+        if len(text) > 16 and " " in text and len(split_pairs) < 3:
+            mid = len(text) // 2
+            spaces = [i for i, ch in enumerate(text) if ch == " "]
+            split_at = min(spaces, key=lambda i: abs(i - mid))
+            split_pairs.append((text[:split_at].strip(), emp))
+            split_pairs.append((text[split_at:].strip(), emp))
         else:
-            emphasis_bool.append(False)
+            split_pairs.append((text, emp))
+    split_pairs = split_pairs[:4]
+    while len(split_pairs) < 4:
+        split_pairs.append(("", False))
+
+    headline_lines = [p[0] for p in split_pairs]
+    emphasis_bool = [p[1] for p in split_pairs]
 
     return {
         "headline_lines": headline_lines,
@@ -208,6 +226,22 @@ def _lines_to_tspans(lines, x, line_height):
     return "".join(parts)
 
 
+def _fit_headline(headline_lines, max_width=560, max_font=100, min_font=48):
+    """Compute a font size that guarantees the longest headline line fits the
+    left column, plus the matching line height and first-baseline Y.
+
+    Bold condensed caps average ~0.60 * font_size per character advance.
+    The headline block starts right below the logo zone (~y 190) and the
+    first baseline sits one cap-height below that.
+    """
+    longest = max((len(line) for line in headline_lines if line), default=1)
+    fitted = int(max_width / (0.60 * longest))
+    font_size = max(min_font, min(max_font, fitted))
+    line_height = int(font_size * 1.14)
+    start_y = 200 + font_size  # first baseline: block top ~200 + cap height
+    return font_size, line_height, start_y
+
+
 def compose_svg(template_str, slots, illustration_svg, footer_data):
     """Inject slots + illustration + footer data into the template, returning
     the final SVG string ready to rasterize.
@@ -215,33 +249,49 @@ def compose_svg(template_str, slots, illustration_svg, footer_data):
     Token scheme (must match app/brands/{brand_id}/template.svg):
       {{HEADLINE_LINE_1}} .. {{HEADLINE_LINE_4}}        text content
       {{HEADLINE_LINE_1_COLOR}} .. {{HEADLINE_LINE_4}}  fill color (hex)
+      {{HEADLINE_FONT_SIZE}} {{HEADLINE_LINE_HEIGHT}} {{HEADLINE_START_Y}}
+                                  computed so the longest line always fits
       {{SUPPORTING_PARA_TSPANS}}  pre-wrapped tspans for the supporting paragraph
       {{INFO_CARD_TSPANS}}        pre-wrapped tspans for the info card text
-      {{CTA_TSPANS}}              pre-wrapped tspans for the CTA text
+      {{CTA_TSPANS}}              single-line tspan for the CTA (truncated)
       {{ILLUSTRATION_SVG}}        inline <g> from the illustrations library
       {{FOOTER_WEBSITE}} {{FOOTER_PHONE}} {{FOOTER_TAGLINE}} {{FOOTER_HASHTAG}}
 
-    Text wrapping happens here (not in the SVG) because cairosvg does not
-    reliably render foreignObject/HTML. We measure width using a rough
-    average-advance-width estimate and break into tspans.
+    Text wrapping and headline auto-fit happen here (not in the SVG) because
+    cairosvg does not reliably render foreignObject/HTML and SVG has no
+    native wrap.
     """
     s = _normalize_slots(slots)
     headline_colors = [
         PRIMARY_BLUE if emp else DARK_NAVY for emp in s["headline_emphasis"]
     ]
 
-    # Pre-wrap the three text zones. Widths match the template's zone widths.
-    supporting_lines = _wrap_to_lines(s["supporting_paragraph"], font_size=22, max_width=460)
-    info_lines = _wrap_to_lines(s["info_card_text"], font_size=15, max_width=372)
-    # CTA is uppercase in the template spirit; wrap the uppercase form so
-    # wider letters don't overflow the navy bar.
-    cta_text = s["cta_text"]
-    cta_lines = _wrap_to_lines(cta_text, font_size=15, max_width=360)
+    font_size, line_height, start_y = _fit_headline(s["headline_lines"])
 
-    # Cap line counts so zones don't overflow their containers.
-    supporting_lines = supporting_lines[:4]
-    info_lines = info_lines[:3]
-    cta_lines = cta_lines[:2]
+    # Pre-wrap the three text zones. Widths match the template's zone widths.
+    supporting_all = _wrap_to_lines(s["supporting_paragraph"], font_size=23, max_width=520)
+    supporting_lines = supporting_all[:4]
+    if len(supporting_all) > 4:
+        supporting_lines[-1] = supporting_lines[-1].rstrip(".,;: ") + "…"
+    info_all = _wrap_to_lines(s["info_card_text"], font_size=16, max_width=414)
+    info_lines = info_all[:3]
+    if len(info_all) > 3:
+        info_lines[-1] = info_lines[-1].rstrip(".,;: ") + "…"
+
+    # Anchor the supporting paragraph bottom-up just above the info card
+    # (top at y=806) so the gap stays constant however many lines wrap.
+    supporting_y = 800 - 33 * len(supporting_lines)
+
+    # CTA is a single line on a fixed-width navy bar; truncate with an
+    # ellipsis rather than wrapping (the bar cannot grow). Font size is
+    # fitted so the text always clears the arrow at x=556 (zone 96..540).
+    cta_text = s["cta_text"].upper()
+    if len(cta_text) > 46:
+        cta_text = cta_text[:45].rstrip() + "…"
+    cta_lines = [cta_text]
+    # width ≈ len * (0.64*font + 0.8 letter-spacing); solve for font, cap 17.
+    cta_font = min(17, int((440 / max(len(cta_text), 1) - 0.8) / 0.64)) if cta_text else 17
+    cta_font = max(13, cta_font)
 
     replacements = {
         "{{HEADLINE_LINE_1}}": _escape_xml(s["headline_lines"][0]),
@@ -252,9 +302,14 @@ def compose_svg(template_str, slots, illustration_svg, footer_data):
         "{{HEADLINE_LINE_2_COLOR}}": headline_colors[1],
         "{{HEADLINE_LINE_3_COLOR}}": headline_colors[2],
         "{{HEADLINE_LINE_4_COLOR}}": headline_colors[3],
-        "{{SUPPORTING_PARA_TSPANS}}": _lines_to_tspans(supporting_lines, x=80, line_height=30),
-        "{{INFO_CARD_TSPANS}}": _lines_to_tspans(info_lines, x=156, line_height=20),
-        "{{CTA_TSPANS}}": _lines_to_tspans(cta_lines, x=92, line_height=18),
+        "{{HEADLINE_FONT_SIZE}}": str(font_size),
+        "{{HEADLINE_LINE_HEIGHT}}": str(line_height),
+        "{{HEADLINE_START_Y}}": str(start_y),
+        "{{SUPPORTING_PARA_Y}}": str(supporting_y),
+        "{{CTA_FONT_SIZE}}": str(cta_font),
+        "{{SUPPORTING_PARA_TSPANS}}": _lines_to_tspans(supporting_lines, x=64, line_height=33),
+        "{{INFO_CARD_TSPANS}}": _lines_to_tspans(info_lines, x=150, line_height=21),
+        "{{CTA_TSPANS}}": _lines_to_tspans(cta_lines, x=96, line_height=18),
         "{{ILLUSTRATION_SVG}}": illustration_svg or "",
         "{{FOOTER_WEBSITE}}": _escape_xml(footer_data.get("website", "")),
         "{{FOOTER_PHONE}}": _escape_xml(footer_data.get("phone", "")),

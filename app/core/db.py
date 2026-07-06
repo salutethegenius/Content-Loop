@@ -182,10 +182,18 @@ def upsert_brand(brand_id, config, voice_md):
         conn.close()
 
 
-def get_brand_from_db(brand_id):
-    """Return (config_dict, voice_md) for a DB-backed brand, or None if absent."""
+def _config_dict(value):
+    """psycopg2 auto-decodes JSONB columns to dicts; older code paths and
+    text-typed columns hand back strings. Accept both."""
     import json
 
+    if isinstance(value, dict):
+        return value
+    return json.loads(value)
+
+
+def get_brand_from_db(brand_id):
+    """Return (config_dict, voice_md) for a DB-backed brand, or None if absent."""
     conn = get_conn()
     try:
         with conn.cursor() as cur:
@@ -196,20 +204,18 @@ def get_brand_from_db(brand_id):
             row = cur.fetchone()
             if not row:
                 return None
-            return json.loads(row[0]), row[1]
+            return _config_dict(row[0]), row[1]
     finally:
         conn.close()
 
 
 def list_db_brands():
     """Return all DB-backed brand configs (active ones filtered by caller)."""
-    import json
-
     conn = get_conn()
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT config FROM brands")
-            return [json.loads(r[0]) for r in cur.fetchall()]
+            return [_config_dict(r[0]) for r in cur.fetchall()]
     finally:
         conn.close()
 
