@@ -95,7 +95,7 @@ def generate_image(prompt, model=None):
         input=prompt,
         response_format={
             "type": "image",
-            "mime_type": "image/png",
+            "mime_type": "image/jpeg",
             "aspect_ratio": "1:1",
         },
     )
@@ -126,7 +126,7 @@ def save_image(image_bytes, brand_id, item_id):
                 f"IMAGE_DIR {IMAGE_DIR} does not exist and could not be created: {exc}"
             )
 
-    filename = f"{brand_id}_{item_id}_{int(time.time())}.png"
+    filename = f"{brand_id}_{item_id}_{int(time.time())}.jpg"
     path = os.path.join(IMAGE_DIR, filename)
     with open(path, "wb") as f:
         f.write(image_bytes)
