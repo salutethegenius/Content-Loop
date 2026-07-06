@@ -1,6 +1,6 @@
 # Content Loop Agent — Session Handoff
 
-**Last updated:** 2026-07-05 (V2 publish + schedule + `/nova` slash command — verified live)
+**Last updated:** 2026-07-06 (V2 + 1.5.0 onboarding gate on `/nova` brand picker; image generation next)
 **Repo:** https://github.com/salutethegenius/Content-Loop (private)
 **Live deployment:** https://nova-production-14f6.up.railway.app
 **Railway project:** `verityos-agents` (ID `47ab2c83-6fc9-42e7-9a12-92c98552c2ea`), service `nova`, environment `production`
@@ -168,10 +168,47 @@ Slack rejects block messages where two buttons share the same `action_id` (`inva
 | brand_id | display_name | source | platforms | has_pillars | notes |
 | --- | --- | --- | --- | --- | --- |
 | `biccu` | BICCU | DB (onboarded) | facebook, instagram, linkedin | yes, 7 | credit union, cadence 2 days, fully onboarded via Nova |
-| `drewber` | Drewber Solutions | filesystem seed | facebook, instagram | no | uses fallback prompt until onboarded |
-| `kgc` | Kemis Group of Companies | filesystem seed | facebook, instagram | no | uses fallback prompt until onboarded |
+| `drewber` | Drewber Solutions | filesystem seed | facebook, instagram | no | not yet onboarded (picker now prompts to onboard — see section 16) |
+| `kgc` | Kemis Group of Companies | filesystem seed | facebook, instagram | no | not yet onboarded (picker now prompts to onboard — see section 16) |
 
-To onboard Drewber or KGC, hit `/onboard/start` with the right `brand_id` and channel, same flow as BICCU.
+Drewber and KGC still need to be onboarded through Nova before they generate on-voice, pillar-anchored drafts. Run `/nova` in Slack → click the brand → **Onboard now** (new as of 1.5.0), or hit `/onboard/start` with the right `brand_id` and channel.
+
+### 8.1 Adding a new brand — three options
+
+None of these require a code change to `core/` or `routes/`. Brands are plug-ins.
+
+**Option A — Onboard through Nova (intended path).** Two entry points:
+- From Slack: `/nova` → click the brand → **Onboard now** (works only after a seed folder exists, see Option B).
+- From the admin endpoint (works with or without a seed folder):
+  ```bash
+  curl -X POST -H "X-Cron-Secret: massive-music-tech-issues" -H "Content-Type: application/json" \
+    -d '{"brand_id":"acme","display_name":"Acme Co","channel":"C0BF8QKP0PL"}' \
+    https://nova-production-14f6.up.railway.app/onboard/start
+  ```
+  Nova opens a thread in `#nova-agent`, walks the 6 phases, Claude synthesizes voice.md + config.json (with `content_pillars`), you Approve → row lands in `brands` → immediately live.
+
+**Option B — Drop a filesystem seed folder** (so the brand shows up in the `/nova` picker):
+- Create `app/brands/{brand_id}/config.json`:
+  ```json
+  {
+    "brand_id": "acme",
+    "display_name": "Acme Co",
+    "active": true,
+    "platforms": ["facebook", "instagram"],
+    "posting_cadence_days": 3,
+    "image_style_prompt": "clean, modern, neutral palette"
+  }
+  ```
+- Optionally `app/brands/{brand_id}/voice.md` (stub is fine; onboarding overwrites with the DB version).
+- `get_active_brands()` reads the filesystem at request time, so a redeploy is needed for a *new* folder to appear. After redeploy, the brand appears in the `/nova` picker; clicking it triggers the "needs onboarding" prompt → **Onboard now** runs Option A. This is the cleanest workflow: seed folder → `/nova` → onboard → live.
+
+**Option C — Direct DB insert** (not recommended, only if you already have a voice.md from elsewhere):
+- `INSERT INTO brands (brand_id, config, voice_md) VALUES (...)` directly. Bypasses Nova's interview and Claude synthesis — you hand-write voice.md + config (including `content_pillars`). The normal onboarding flow does this for you via `db.upsert_brand`.
+
+### 8.2 What you cannot do today (deferred)
+
+- **Add a brand purely from Slack with no seed folder and no curl.** The `/nova` picker only lists brands that already exist in the DB or on disk — there is no "create new brand" button. A future `/nova onboard <brand_id> <display_name>` subcommand (or a button on the picker that opens a "what's the brand id + display name?" dialog) calling `onboarding.start_session` would close this gap. ~20 lines on top of 1.5.0.
+- **Per-brand Facebook page.** `META_PAGE_ID` is a single env var (BICCU's page). To publish for a second brand's Facebook page, store `meta_page_id` in each brand's config and pass it through `meta_publisher` (already flagged in section 12).
 
 ---
 
@@ -399,3 +436,49 @@ The Pipeboard Meta Ads MCP connection is scoped to `ads_management` only — it 
 The `META_PAGE_ACCESS_TOKEN` on Railway is **long-lived (never expires, `expires_at: 0`)** — generated via the `fb_exchange_token` flow + page-token re-fetch. App used is "Nova-Agent" (app id `27311849091810327`), token type PAGE, scopes `pages_show_list` + `pages_read_engagement` + `pages_manage_posts`. It only stops working if the app is removed from the page or the page unlinks the app.
 
 To regenerate from scratch (e.g. for a second brand's page): see the steps in section 15.
+
+---
+
+## 16. Onboarding gate on the `/nova` brand picker (1.5.0, 2026-07-06)
+
+**Bug fixed:** picking a not-yet-onboarded brand (Drewber, KGC) from the `/nova` brand picker used to silently fall through to the platform picker and generate with the degraded fallback prompt — no prompt to onboard. KGC had the same behavior. Now the picker intercepts non-onboarded brands and offers to onboard instead.
+
+### What changed
+
+- `db.is_onboarded(brand_id)` — True only if the brand has a row in `brands` (i.e. completed Nova onboarding and was approved). Filesystem-only seeds return False.
+- `onboarding.start_session(brand_id, display_name, channel)` — extracted from the `/onboard/start` route so the Slack picker can kick off onboarding without an HTTP call. Posts the welcome message as a top-level message in the channel, posts phase 1 as the first threaded reply, persists the session row. The `/onboard/start` route now just calls this.
+- `generation_flow.handle_pick_brand` — gated on `db.is_onboarded`. Non-onboarded brands get the new prompt (see below) instead of the platform picker. DB failures fall through to the platform picker so a DB outage doesn't block generation entirely.
+- New action ids in `slack_interactions.py`: `gen_onboard_{brand_id}` (start onboarding from the picker) and `gen_force_pick_{brand_id}` (bypass the gate, used by the "Generate anyway" button). Per-brand suffixes keep action_ids unique (Slack rejects duplicates).
+
+### New Slack UX for non-onboarded brands
+
+Clicking a non-onboarded brand in the `/nova` picker posts in-thread:
+
+> *{display_name}* hasn't been onboarded yet.
+> Without onboarding, Nova has no voice.md or content pillars for this brand, so drafts will be generic and off-voice. Onboard now to set the voice, pillars, compliance rules, and cadence.
+>
+> **[Onboard now]**  **[Generate anyway]**
+
+- **Onboard now** → opens a fresh top-level Nova onboarding thread in `#nova-agent` and posts a pointer reply in the picker thread.
+- **Generate anyway** → posts the platform picker directly (preserves the previous fallback-prompt path behind an explicit click).
+- BICCU still flows straight to the platform picker (it has a `brands` row).
+- The cron loop (`/cron/generate`) is untouched — it still generates for all active brands including seed brands using the fallback prompt. Gating cron is a separate decision.
+
+### Files changed (1.5.0)
+
+```
+app/core/db.py                      + is_onboarded(brand_id)
+app/core/onboarding.py              + start_session(...) extracted from /onboard/start
+app/core/generation_flow.py         handle_pick_brand gated; + format_onboard_prompt_blocks,
+                                    + handle_force_pick_brand, + _post_platform_picker
+app/routes/onboarding.py            refactored to call onboarding.start_session
+app/routes/slack_interactions.py    + gen_onboard_* + gen_force_pick_* handlers,
+                                    + _handle_onboard_from_picker background task
+app/main.py                         version 1.5.0
+```
+
+### Open follow-ups
+
+- Drewber and KGC still need to actually be onboarded (run `/nova` → click the brand → **Onboard now**, or `/onboard/start`).
+- Optionally gate `/cron/generate` on onboarding too (currently still uses fallback prompt for seed brands).
+- Optionally add `/nova onboard <brand_id> <display_name>` subcommand for zero-touch brand creation from Slack with no seed folder or curl (see section 8.2).
