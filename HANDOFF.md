@@ -1,6 +1,6 @@
 # Content Loop Agent — Session Handoff
 
-**Last updated:** 2026-07-06 (V2 + 1.5.0 onboarding gate on `/nova` brand picker; image generation next)
+**Last updated:** 2026-07-06 (V2 + 1.5.0 onboarding gate + 1.6 image gen + 1.7 design-system pivot)
 **Repo:** https://github.com/salutethegenius/Content-Loop (private)
 **Live deployment:** https://nova-production-14f6.up.railway.app
 **Railway project:** `verityos-agents` (ID `47ab2c83-6fc9-42e7-9a12-92c98552c2ea`), service `nova`, environment `production`
@@ -482,3 +482,131 @@ app/main.py                         version 1.5.0
 - Drewber and KGC still need to actually be onboarded (run `/nova` → click the brand → **Onboard now**, or `/onboard/start`).
 - Optionally gate `/cron/generate` on onboarding too (currently still uses fallback prompt for seed brands).
 - Optionally add `/nova onboard <brand_id> <display_name>` subcommand for zero-touch brand creation from Slack with no seed folder or curl (see section 8.2).
+
+---
+
+## 17. Image generation — design-system pivot (1.6 → 1.7, 2026-07-06)
+
+### Why a design system instead of free generation
+
+V1.6 asked Claude to write a full SVG per post. Output was inconsistent and mediocre (one test post rendered as a basic announcement card, not the Pentagram-style premium financial brand reference). V1.7 replaces free generation with a **fixed SVG template + curated illustration library**. Claude's job is reduced to filling structured JSON slots (headline lines, supporting paragraph, info card, CTA, illustration id), which it does reliably. Python composes the slots into the template, cairosvg rasterizes to PNG.
+
+The template IS the brand visual identity. Iterating on the look = editing one SVG file + redeploying, not re-prompting Claude.
+
+### Architecture
+
+```
+Draft text + brand config
+   ↓
+Claude slot-fill call (structured JSON output)
+   ↓
+JSON slots: headline_lines, headline_emphasis, supporting_paragraph,
+            info_card_text, cta_text, illustration_id
+   ↓
+compose_svg() injects slots + selected illustration + footer data
+into app/brands/{brand_id}/template.svg
+   ↓
+cairosvg.svg2png() → PNG bytes
+   ↓
+Save to /data/images, public URL → Slack + Meta /photos
+```
+
+### Files (1.7)
+
+```
+app/brands/biccu/template.svg             1080x1080 fixed layout, named tokens
+app/brands/biccu/illustrations/*.svg      8 hand-coded <g> groups (piggy_bank,
+                                          coins, shield, wallet, growth_arrow,
+                                          house, savings_jar, dollar_icon)
+app/brands/biccu/config.json              + design block (template path,
+                                          illustrations_dir, default_illustration)
+app/core/design_loader.py                 load_template, list_illustrations,
+                                          load_illustration, get_footer_data
+app/core/image_generator.py               rewritten: build_slot_prompt,
+                                          generate_slots, compose_svg,
+                                          generate_and_save orchestrates
+app/core/onboarding.py                    Phase 7 + footer-data question;
+                                          synthesis prompt emits footer +
+                                          design blocks in config_json
+app/main.py                               version 1.7.0
+```
+
+### Brand config schema additions
+
+```json
+{
+  "visual_identity": {
+    "colors": ["#0079C8", "#003C71", "#47B8E8", "#FFFFFF", "#F47A20"],
+    "typography_style": "geometric sans-serif, bold for headlines, regular for body",
+    "layout": "logo top-left, huge headline left, info card, CTA, illustration right, footer",
+    "wordmark_text": "BICCU",
+    "avoid": ["stock photos", "clipart", "people", "bevels", "glossy effects"]
+  },
+  "footer": {
+    "website": "biccu.org",
+    "phone": "(242) 601-5900",
+    "tagline": "Building Stronger Together",
+    "hashtag": "#CommunityFirst",
+    "social": {"facebook": "BICCU", "instagram": "biccu", "linkedin": "biccu"}
+  },
+  "design": {
+    "template": "template.svg",
+    "illustrations_dir": "illustrations",
+    "default_illustration": "piggy_bank"
+  }
+}
+```
+
+BICCU's DB row was hand-patched with all three blocks (one nested-`jsonb_set` UPDATE). Drewber and KGC will get them automatically when onboarded (the synthesis prompt now emits them).
+
+### Template token scheme
+
+The template uses Python `str.replace` tokens (double-brace). The composer in `image_generator.compose_svg` does the substitution:
+
+| Token | Replaced with |
+| --- | --- |
+| `{{HEADLINE_LINE_1}}` .. `{{HEADLINE_LINE_4}}` | headline text (line 4 may be empty) |
+| `{{HEADLINE_LINE_1_COLOR}}` .. `{{HEADLINE_LINE_4_COLOR}}` | `#0079C8` (emphasis) or `#003C71` (regular) |
+| `{{SUPPORTING_PARA}}` | 1-2 sentence supporting paragraph |
+| `{{INFO_CARD_TEXT}}` | one-sentence info card copy |
+| `{{CTA_TEXT}}` | short CTA / question |
+| `{{ILLUSTRATION_SVG}}` | inline `<g>` from the selected illustration file |
+| `{{FOOTER_WEBSITE}}` `{{FOOTER_PHONE}}` `{{FOOTER_TAGLINE}}` `{{FOOTER_HASHTAG}}` | footer data |
+
+### Illustration library
+
+Each `app/brands/biccu/illustrations/{id}.svg` is a bare `<g>...</g>` (no `<svg>` wrapper) sized for a ~360x360 zone. The template's illustration zone wraps it: `<g transform="translate(620, 280) scale(1.0)">{{ILLUSTRATION_SVG}}</g>`. To add a new illustration: drop a new `.svg` file in the folder. Claude picks from the available ids automatically (with fallback to `default_illustration` if Claude's choice isn't found).
+
+### Adding a new brand's design system (when Drewber/KGC onboard)
+
+1. Run `/nova` → click the brand → **Onboard now** (or `/onboard/start`).
+2. The onboarding synthesis now emits `visual_identity`, `footer`, and `design` blocks in `config_json`. Approve lands them in the `brands` table.
+3. Hand-craft `app/brands/{brand_id}/template.svg` (clone BICCU's as a starting point and rebrand).
+4. Hand-code `app/brands/{brand_id}/illustrations/*.svg` (clone BICCU's and recolor).
+5. Redeploy. The brand's `Generate image` button now produces on-brand templated graphics.
+
+### Cost
+
+Per Generate image click: one Claude Sonnet call, ~500-1000 tokens output. ~$0.015-0.03 with Sonnet, ~$0.005 with Haiku. Override globally via `IMAGE_LLM_MODEL` env var or per-brand via `config.image_model`.
+
+### Operational setup (carried over from 1.6)
+
+- Railway volume `nova-volume` mounted at `/data/images` (50GB).
+- `aptfile` at repo root installs `libcairo2`, `libpango-1.0-0`, `libpangocairo-1.0-0`, `libgdk-pixbuf2.0-0`, `libffi-dev` for cairosvg.
+- `requirements.txt` includes `cairosvg>=2.7`.
+- `IMAGE_BASE_URL` set to `https://nova-production-14f6.up.railway.app`.
+- `GEMINI_API_KEY` left set on Railway in case the Gemini quota is topped up later (not currently used; the V1.6 Gemini path was removed in V1.7).
+
+### Out of scope for V1.7
+
+- Real BICCU logo SVG (V1 uses a styled text wordmark in the template; swap in `<image href="...">` when the actual logo asset is hosted).
+- Per-brand templates for Drewber/KGC (architecture supports it; only BICCU ships in V1.7).
+- Reference-image-as-prompt (the template IS the reference now).
+- Auto-wrapping for the supporting paragraph (Claude is instructed to keep it to 1-2 sentences that fit the foreignObject zone; if it overflows, the foreignObject clips).
+
+### Known V1.7 risks to watch
+
+- **cairosvg + foreignObject**: the supporting paragraph, info card text, and CTA use `<foreignObject>` with simple inline HTML for auto-wrap. cairosvg supports this via libpango but support can be flaky for non-trivial CSS. If text doesn't render in the first live test, fall back to `<tspan>` with manual line breaks (would require Claude to also pre-break the supporting paragraph into lines).
+- **Font availability**: the template uses `Arial, Helvetica, sans-serif`. Railway's NIXPACKS base image has DejaVu Sans (a Helvetica-ish fallback) but not Arial itself. The text will render in DejaVu Sans — clean and professional, but not exactly Helvetica. To get closer to the reference, add `fonts-dejavu` or `ttf-mscorefonts-installer` to the aptfile.
+- **First live test**: run `/nova` → BICCU → Facebook → Generate image. The output should match the reference layout (logo top-left, huge headline left, info card, CTA on navy curve, illustration right, footer). Iterate on `template.svg` until it looks right.
+

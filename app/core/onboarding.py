@@ -103,6 +103,7 @@ PHASES = [
             "How should the wordmark or logo appear on generated images? (e.g. 'BICCU' bottom-right, or 'no wordmark, just typography'.)",
             "What is the layout/feel for image posts? (e.g. 'centered bold headline on solid brand-color background' or 'split layout, text left, accent color right'.)",
             "Anything Nova should avoid in generated images? (e.g. 'no stock photos, no clipart, no gradients, no people'.)",
+            "Footer data for generated images: website URL, phone number, tagline (one short line), and a primary hashtag. Also list social handles for facebook, instagram, linkedin if you have them. Format: website=..., phone=..., tagline=..., hashtag=..., facebook=..., instagram=..., linkedin=...",
         ],
     ),
 ]
@@ -270,7 +271,13 @@ def synthesize_brand(brand_id, display_name, answers):
         "    * typography_style: short descriptive string\n"
         "    * wordmark_text: the wordmark/logo text to render on images (or empty string)\n"
         "    * layout: short descriptive string for the image layout/feel\n"
-        "    * avoid: array of strings, things to never include in generated images\n\n"
+        "    * avoid: array of strings, things to never include in generated images\n"
+        "- footer: object with website, phone, tagline, hashtag, and social "
+        "(sub-object with facebook, instagram, linkedin handles). Derive from the "
+        "Phase 7 footer-data answer. Use empty strings for anything not provided.\n"
+        "- design: object with template (default 'template.svg'), illustrations_dir "
+        "(default 'illustrations'), default_illustration (default 'piggy_bank'). "
+        "Use the defaults unless the brand specifically requests otherwise.\n\n"
         "Rules: no em-dashes anywhere. Follow the brand's own voice rules in the output. "
         "If the answers are silent on a field, infer sensibly from the brand's industry "
         "and tone. Never invent rates, products, or promotions."

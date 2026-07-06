@@ -1,0 +1,34 @@
+<g>
+  <!-- Savings jar. Fits 0-360 zone. Brand palette. -->
+  <circle cx="180" cy="180" r="150" fill="#FFFFFF"/>
+  <circle cx="180" cy="180" r="150" fill="none" stroke="#47B8E8" stroke-width="2" opacity="0.5"/>
+
+  <!-- Jar lid (Dark Navy) -->
+  <rect x="116" y="96" width="128" height="20" rx="8" fill="#003C71"/>
+  <!-- Jar neck (narrower) -->
+  <rect x="124" y="116" width="112" height="14" fill="#003C71"/>
+
+  <!-- Jar body (Primary Blue, slightly translucent feel via lighter overlay) -->
+  <path d="M120 130 L240 130 L240 270 Q240 286 224 286 L136 286 Q120 286 120 270 Z" fill="#0079C8"/>
+
+  <!-- Jar glass highlight (Light Blue, left side) -->
+  <path d="M132 140 L146 140 L146 270 Q146 278 138 278 L132 278 Z" fill="#47B8E8" opacity="0.55"/>
+
+  <!-- Coin slot in the lid -->
+  <rect x="156" y="102" width="48" height="5" rx="2.5" fill="#0079C8"/>
+
+  <!-- Coins inside the jar (white circles stacked) -->
+  <circle cx="160" cy="200" r="14" fill="#FFFFFF" opacity="0.9"/>
+  <circle cx="200" cy="200" r="14" fill="#FFFFFF" opacity="0.9"/>
+  <circle cx="180" cy="226" r="14" fill="#FFFFFF" opacity="0.9"/>
+  <circle cx="160" cy="248" r="14" fill="#FFFFFF" opacity="0.9"/>
+  <circle cx="200" cy="248" r="14" fill="#FFFFFF" opacity="0.9"/>
+
+  <!-- Orange coin at the top of the jar (just below the lid) -->
+  <circle cx="180" cy="160" r="16" fill="#F47A20"/>
+  <text x="180" y="167" font-size="18" font-weight="800" fill="#FFFFFF" text-anchor="middle" font-family="Arial, Helvetica, sans-serif">$</text>
+
+  <!-- Label band on the jar (white rounded rect with a thin line) -->
+  <rect x="140" y="244" width="80" height="22" rx="4" fill="#FFFFFF" opacity="0.85"/>
+  <line x1="148" y1="255" x2="212" y2="255" stroke="#003C71" stroke-width="1.4" opacity="0.5"/>
+</g>

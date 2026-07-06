@@ -1,0 +1,32 @@
+<g>
+  <!-- Stack of coins. Fits 0-360 zone. Flat vector, brand palette. -->
+  <!-- Soft backdrop circle -->
+  <circle cx="180" cy="180" r="150" fill="#FFFFFF"/>
+  <circle cx="180" cy="180" r="150" fill="none" stroke="#47B8E8" stroke-width="2" opacity="0.5"/>
+
+  <!-- Coin stack (4 coins, stacked bottom to top) -->
+  <ellipse cx="180" cy="270" rx="78" ry="16" fill="#003C71"/>
+  <rect x="102" y="246" width="156" height="24" fill="#003C71"/>
+  <ellipse cx="180" cy="246" rx="78" ry="16" fill="#0079C8"/>
+
+  <ellipse cx="180" cy="222" rx="78" ry="16" fill="#003C71"/>
+  <rect x="102" y="198" width="156" height="24" fill="#003C71"/>
+  <ellipse cx="180" cy="198" rx="78" ry="16" fill="#0079C8"/>
+
+  <ellipse cx="180" cy="174" rx="78" ry="16" fill="#003C71"/>
+  <rect x="102" y="150" width="156" height="24" fill="#003C71"/>
+  <ellipse cx="180" cy="150" rx="78" ry="16" fill="#0079C8"/>
+
+  <!-- Top coin (orange, with $ glyph) -->
+  <ellipse cx="180" cy="126" rx="78" ry="16" fill="#F47A20"/>
+  <rect x="102" y="102" width="156" height="24" fill="#F47A20"/>
+  <ellipse cx="180" cy="102" rx="78" ry="16" fill="#F47A20"/>
+  <text x="180" y="110" font-size="26" font-weight="800" fill="#FFFFFF" text-anchor="middle" font-family="Arial, Helvetica, sans-serif">$</text>
+
+  <!-- Subtle inner ring on top coin -->
+  <ellipse cx="180" cy="102" rx="64" ry="12" fill="none" stroke="#FFFFFF" stroke-width="1.4" opacity="0.5"/>
+
+  <!-- Small accent: tiny light-blue coin falling from above-right -->
+  <circle cx="280" cy="60" r="14" fill="#47B8E8"/>
+  <circle cx="280" cy="60" r="9" fill="none" stroke="#FFFFFF" stroke-width="1.2" opacity="0.7"/>
+</g>

@@ -1,0 +1,30 @@
+<g>
+  <!-- Wallet. Fits 0-360 zone. Brand palette. -->
+  <circle cx="180" cy="180" r="150" fill="#FFFFFF"/>
+  <circle cx="180" cy="180" r="150" fill="none" stroke="#47B8E8" stroke-width="2" opacity="0.5"/>
+
+  <!-- Wallet body (Dark Navy back panel) -->
+  <rect x="80" y="130" width="200" height="140" rx="16" fill="#003C71"/>
+
+  <!-- Wallet front (Primary Blue) -->
+  <rect x="80" y="150" width="200" height="120" rx="16" fill="#0079C8"/>
+
+  <!-- Wallet flap (Light Blue accent along the top edge) -->
+  <rect x="80" y="150" width="200" height="14" rx="7" fill="#47B8E8" opacity="0.55"/>
+
+  <!-- Card slot (white rounded rect on the right side) -->
+  <rect x="196" y="190" width="84" height="56" rx="10" fill="#FFFFFF"/>
+  <circle cx="220" cy="218" r="9" fill="#F47A20"/>
+  <rect x="234" y="212" width="36" height="4" rx="2" fill="#003C71"/>
+  <rect x="234" y="222" width="28" height="3" rx="1.5" fill="#003C71" opacity="0.6"/>
+
+  <!-- Stitching line along the bottom -->
+  <line x1="96" y1="252" x2="264" y2="252" stroke="#FFFFFF" stroke-width="1.2" stroke-dasharray="4 3" opacity="0.5"/>
+
+  <!-- Orange coin peeking out the top -->
+  <circle cx="140" cy="120" r="22" fill="#F47A20"/>
+  <text x="140" y="129" font-size="24" font-weight="800" fill="#FFFFFF" text-anchor="middle" font-family="Arial, Helvetica, sans-serif">$</text>
+
+  <!-- Subtle highlight on the wallet body -->
+  <rect x="92" y="160" width="80" height="6" rx="3" fill="#FFFFFF" opacity="0.25"/>
+</g>

@@ -16,7 +16,7 @@ from routes.slack_events import router as slack_events_router
 from routes.slack_interactions import router as slack_router
 from routes.static import router as static_router
 
-app = FastAPI(title="Content Loop Agent", version="1.6.0")
+app = FastAPI(title="Content Loop Agent", version="1.7.0")
 
 
 @app.get("/")

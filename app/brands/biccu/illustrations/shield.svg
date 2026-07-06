@@ -1,0 +1,21 @@
+<g>
+  <!-- Shield (protection / security). Fits 0-360 zone. Brand palette. -->
+  <circle cx="180" cy="180" r="150" fill="#FFFFFF"/>
+  <circle cx="180" cy="180" r="150" fill="none" stroke="#47B8E8" stroke-width="2" opacity="0.5"/>
+
+  <!-- Shield silhouette (Dark Navy) -->
+  <path d="M180 80 L260 112 L260 196 Q260 248 180 288 Q100 248 100 196 L100 112 Z" fill="#003C71"/>
+
+  <!-- Inner shield (Primary Blue) -->
+  <path d="M180 100 L242 126 L242 194 Q242 236 180 270 Q118 236 118 194 L118 126 Z" fill="#0079C8"/>
+
+  <!-- Check mark (white) in the center -->
+  <path d="M148 188 L172 212 L218 158" stroke="#FFFFFF" stroke-width="10" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Orange accent: small dot at the top of the shield -->
+  <circle cx="180" cy="80" r="10" fill="#F47A20"/>
+
+  <!-- Subtle inner outline -->
+  <path d="M180 100 L242 126 L242 194 Q242 236 180 270 Q118 236 118 194 L118 126 Z"
+        fill="none" stroke="#47B8E8" stroke-width="1.4" opacity="0.45"/>
+</g>

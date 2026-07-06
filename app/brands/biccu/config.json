@@ -4,5 +4,10 @@
   "active": true,
   "platforms": ["facebook", "instagram"],
   "posting_cadence_days": 3,
-  "image_style_prompt": "credit-union blue and white, community-forward, clean"
+  "image_style_prompt": "credit-union blue and white, community-forward, clean",
+  "design": {
+    "template": "template.svg",
+    "illustrations_dir": "illustrations",
+    "default_illustration": "piggy_bank"
+  }
 }

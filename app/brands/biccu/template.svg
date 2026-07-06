@@ -1,0 +1,160 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1080" width="1080" height="1080" font-family="'Arial', 'Helvetica', sans-serif">
+  <!-- ============================================================
+       BICCU design system template (V1.7)
+       1080x1080 social graphic. Fixed layout, swap-in slots.
+       Tokens are substituted by image_generator.compose_svg.
+       See HANDOFF.md section 17 for the token scheme.
+
+       Palette:
+         Primary Blue  #0079C8
+         Dark Navy     #003C71
+         Light Blue    #47B8E8
+         White         #FFFFFF
+         Accent Orange #F47A20  (emphasis only)
+       ============================================================ -->
+
+  <defs>
+    <!-- Soft white -> very light blue background gradient -->
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#EAF4FB"/>
+    </linearGradient>
+
+    <!-- Subtle radial light-blue glow upper-right -->
+    <radialGradient id="glowGrad" cx="0.78" cy="0.18" r="0.45">
+      <stop offset="0%" stop-color="#47B8E8" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#47B8E8" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Soft drop shadow for the info card -->
+    <filter id="cardShadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="6"/>
+      <feOffset dx="0" dy="4" result="off"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.18"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+
+    <!-- Reusable social icon glyph (circle + letter) -->
+    <symbol id="socialFb" viewBox="0 0 32 32">
+      <circle cx="16" cy="16" r="14" fill="#003C71"/>
+      <text x="16" y="21" font-size="15" font-weight="700" fill="#FFFFFF" text-anchor="middle">f</text>
+    </symbol>
+    <symbol id="socialIg" viewBox="0 0 32 32">
+      <circle cx="16" cy="16" r="14" fill="#003C71"/>
+      <rect x="9" y="9" width="14" height="14" rx="4" fill="none" stroke="#FFFFFF" stroke-width="1.6"/>
+      <circle cx="16" cy="16" r="3.4" fill="none" stroke="#FFFFFF" stroke-width="1.6"/>
+      <circle cx="20.4" cy="11.6" r="1.1" fill="#FFFFFF"/>
+    </symbol>
+    <symbol id="socialIn" viewBox="0 0 32 32">
+      <circle cx="16" cy="16" r="14" fill="#003C71"/>
+      <text x="16" y="21" font-size="13" font-weight="700" fill="#FFFFFF" text-anchor="middle">in</text>
+    </symbol>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1080" height="1080" fill="url(#bgGrad)"/>
+  <rect width="1080" height="1080" fill="url(#glowGrad)"/>
+
+  <!-- Subtle dotted pattern, very low opacity, top-right -->
+  <g fill="#0079C8" opacity="0.06">
+    <circle cx="940" cy="120" r="2"/><circle cx="980" cy="120" r="2"/><circle cx="1020" cy="120" r="2"/>
+    <circle cx="940" cy="160" r="2"/><circle cx="980" cy="160" r="2"/><circle cx="1020" cy="160" r="2"/>
+    <circle cx="940" cy="200" r="2"/><circle cx="980" cy="200" r="2"/><circle cx="1020" cy="200" r="2"/>
+  </g>
+
+  <!-- ===================== LOGO ZONE (top-left) ===================== -->
+  <!-- Simple wordmark for V1. Replace with <image href="..."> when real logo is available. -->
+  <g id="logo">
+    <!-- Globe + held-by-hands glyph (very simplified) -->
+    <circle cx="46" cy="58" r="22" fill="#0079C8"/>
+    <circle cx="46" cy="58" r="14" fill="none" stroke="#FFFFFF" stroke-width="1.4"/>
+    <path d="M30 70 Q46 78 62 70" stroke="#0079C8" stroke-width="3" fill="none" stroke-linecap="round"/>
+    <text x="82" y="56" font-size="32" font-weight="800" fill="#003C71" letter-spacing="0.5">BICCU</text>
+    <text x="82" y="74" font-size="9" font-weight="600" fill="#0079C8" letter-spacing="1.2">BAHAMA ISLANDS CO-OPERATIVE CREDIT UNION</text>
+  </g>
+
+  <!-- Thin accent divider under the logo -->
+  <line x1="48" y1="92" x2="180" y2="92" stroke="#F47A20" stroke-width="2"/>
+
+  <!-- ===================== HEADLINE ZONE (left, 40-50% of canvas) =====================
+       Headline lines are anchored at x=80, baseline-y starts at 240.
+       Each line is 96px font-size, bold, line-height ~110px.
+       Up to 4 lines; lines 3/4 may be empty (renderer strips empty tspans). -->
+  <g id="headline">
+    <text x="80" y="260" font-size="96" font-weight="800" fill="{{HEADLINE_LINE_1_COLOR}}" letter-spacing="-1.5">
+      <tspan x="80" dy="0">{{HEADLINE_LINE_1}}</tspan>
+      <tspan x="80" dy="110" fill="{{HEADLINE_LINE_2_COLOR}}">{{HEADLINE_LINE_2}}</tspan>
+      <tspan x="80" dy="110" fill="{{HEADLINE_LINE_3_COLOR}}">{{HEADLINE_LINE_3}}</tspan>
+      <tspan x="80" dy="110" fill="{{HEADLINE_LINE_4_COLOR}}">{{HEADLINE_LINE_4}}</tspan>
+    </text>
+  </g>
+
+  <!-- ===================== SUPPORTING PARAGRAPH =====================
+       Wrapped into tspans by compose_svg (foreignObject is not reliably
+       rendered by cairosvg, so we use text+tspan with pre-broken lines).
+       The {{SUPPORTING_PARA_TSPANS}} token expands to one or more <tspan>
+       elements, the first at dy=0 and subsequent at dy=30. -->
+  <text x="80" y="660" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="400" fill="#003C71">
+    {{SUPPORTING_PARA_TSPANS}}
+  </text>
+
+  <!-- ===================== INFO CARD =====================
+       White rounded panel with soft shadow + orange circular icon + text.
+       Text is wrapped into tspans by compose_svg. -->
+  <g id="infoCard" filter="url(#cardShadow)">
+    <rect x="80" y="770" width="460" height="86" rx="14" ry="14" fill="#FFFFFF"/>
+    <circle cx="120" cy="813" r="20" fill="#F47A20"/>
+    <!-- Simple speech-bubble glyph inside the orange circle -->
+    <path d="M112 808 Q112 800 120 800 Q128 800 128 808 Q128 816 120 816 L116 820 L118 816 Q112 816 112 808 Z" fill="#FFFFFF"/>
+    <text x="156" y="803" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="500" fill="#003C71">
+      {{INFO_CARD_TSPANS}}
+    </text>
+  </g>
+
+  <!-- ===================== CTA ZONE (bottom-left, on a navy curved shape) ===================== -->
+  <g id="cta">
+    <path d="M0 880 Q160 866 320 866 L520 866 Q520 920 520 920 L0 920 Z" fill="#003C71"/>
+    <!-- White circular icon + speech bubble -->
+    <circle cx="56" cy="893" r="20" fill="#FFFFFF"/>
+    <path d="M48 888 Q48 880 56 880 Q64 880 64 888 Q64 896 56 896 L52 900 L54 896 Q48 896 48 888 Z" fill="#003C71"/>
+    <text x="92" y="898" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700" fill="#FFFFFF" letter-spacing="0.6">
+      {{CTA_TSPANS}}
+    </text>
+    <!-- Small light-blue arrow at the end of the CTA -->
+    <path d="M460 893 L478 893 M470 885 L478 893 L470 901" stroke="#47B8E8" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- ===================== ILLUSTRATION ZONE (right) =====================
+       ~360x360 zone centered around x=820, y=520. Claude-selected illustration
+       from app/brands/biccu/illustrations/*.svg is injected here. -->
+  <g id="illustration_zone" transform="translate(620, 280) scale(1.0)">
+    {{ILLUSTRATION_SVG}}
+  </g>
+
+  <!-- ===================== FOOTER (thin branded bar at the very bottom) ===================== -->
+  <g id="footer">
+    <rect x="0" y="1004" width="1080" height="76" fill="#FFFFFF"/>
+    <line x1="0" y1="1004" x2="1080" y2="1004" stroke="#E2E8F0" stroke-width="1"/>
+
+    <!-- Website with globe glyph -->
+    <circle cx="48" cy="1042" r="11" fill="none" stroke="#0079C8" stroke-width="1.6"/>
+    <ellipse cx="48" cy="1042" rx="5" ry="11" fill="none" stroke="#0079C8" stroke-width="1.4"/>
+    <line x1="37" y1="1042" x2="59" y2="1042" stroke="#0079C8" stroke-width="1.4"/>
+    <text x="68" y="1047" font-size="15" font-weight="600" fill="#003C71">{{FOOTER_WEBSITE}}</text>
+
+    <!-- Phone with handset glyph -->
+    <path d="M212 1031 Q208 1031 208 1037 L208 1047 Q208 1053 214 1053 Q218 1053 220 1049 L222 1045 Q222 1042 218 1041 L216 1040 Q214 1038 213 1039 L211 1041" fill="none" stroke="#0079C8" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="232" y="1047" font-size="15" font-weight="600" fill="#003C71">{{FOOTER_PHONE}}</text>
+
+    <!-- Social icons -->
+    <use href="#socialFb" x="384" y="1026" width="32" height="32"/>
+    <use href="#socialIg" x="424" y="1026" width="32" height="32"/>
+    <use href="#socialIn" x="464" y="1026" width="32" height="32"/>
+
+    <!-- Tagline (center-right) -->
+    <text x="780" y="1047" font-size="15" font-weight="500" fill="#003C71" text-anchor="middle" font-style="italic">{{FOOTER_TAGLINE}}</text>
+
+    <!-- Hashtag (far right, orange for emphasis) -->
+    <text x="1036" y="1047" font-size="15" font-weight="700" fill="#F47A20" text-anchor="end">{{FOOTER_HASHTAG}}</text>
+  </g>
+</svg>

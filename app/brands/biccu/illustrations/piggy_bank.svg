@@ -1,0 +1,40 @@
+<g>
+  <!-- Piggy bank illustration. Fits 0-360 zone. Flat vector, brand palette. -->
+  <!-- Soft white circle backdrop -->
+  <circle cx="180" cy="180" r="150" fill="#FFFFFF"/>
+  <circle cx="180" cy="180" r="150" fill="none" stroke="#47B8E8" stroke-width="2" opacity="0.5"/>
+  <circle cx="180" cy="180" r="128" fill="none" stroke="#47B8E8" stroke-width="1" opacity="0.3" stroke-dasharray="3 4"/>
+
+  <!-- Piggy body (rounded, Primary Blue) -->
+  <ellipse cx="170" cy="200" rx="92" ry="64" fill="#0079C8"/>
+  <!-- Piggy head bump (snout) -->
+  <ellipse cx="240" cy="190" rx="36" ry="30" fill="#0079C8"/>
+  <!-- Snout nostrils -->
+  <circle cx="248" cy="186" r="3" fill="#003C71"/>
+  <circle cx="262" cy="190" r="3" fill="#003C71"/>
+  <!-- Eye -->
+  <circle cx="218" cy="172" r="5" fill="#FFFFFF"/>
+  <circle cx="219" cy="173" r="2.4" fill="#003C71"/>
+
+  <!-- Ear (small triangle on top) -->
+  <path d="M148 142 L168 156 L150 168 Z" fill="#0079C8"/>
+
+  <!-- Legs (4 small rounded rects) -->
+  <rect x="108" y="244" width="14" height="20" rx="4" fill="#003C71"/>
+  <rect x="138" y="252" width="14" height="20" rx="4" fill="#003C71"/>
+  <rect x="208" y="252" width="14" height="20" rx="4" fill="#003C71"/>
+  <rect x="238" y="244" width="14" height="20" rx="4" fill="#003C71"/>
+
+  <!-- Coin slot (dark navy line on top) -->
+  <rect x="142" y="146" width="56" height="5" rx="2.5" fill="#003C71"/>
+
+  <!-- Orange coin above the slot -->
+  <circle cx="170" cy="118" r="20" fill="#F47A20"/>
+  <text x="170" y="126" font-size="22" font-weight="800" fill="#FFFFFF" text-anchor="middle" font-family="Arial, Helvetica, sans-serif">$</text>
+
+  <!-- Subtle highlight on body -->
+  <ellipse cx="150" cy="180" rx="40" ry="22" fill="#47B8E8" opacity="0.35"/>
+
+  <!-- Tail (small curl) -->
+  <path d="M82 188 Q70 180 78 172 Q88 168 86 178" stroke="#0079C8" stroke-width="5" fill="none" stroke-linecap="round"/>
+</g>
