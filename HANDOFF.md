@@ -599,7 +599,7 @@ Per Generate image click: one Claude Sonnet call, ~500-1000 tokens output. ~$0.0
 
 ### Out of scope for V1.7
 
-- Real BICCU logo SVG (V1 uses a styled text wordmark in the template; swap in `<image href="...">` when the actual logo asset is hosted).
+- ~~Real BICCU logo SVG~~ — DONE in V1.7. The real BICCU logo (globe + family + hands emblem) is base64-embedded in `template.svg`'s logo zone as a 240x240 optimized PNG rendered at 190x190. The source PNG is versioned at `app/brands/biccu/logo.png`. To update the logo: replace `logo.png`, re-encode to base64, and swap the data URI in `template.svg`.
 - Per-brand templates for Drewber/KGC (architecture supports it; only BICCU ships in V1.7).
 - Reference-image-as-prompt (the template IS the reference now).
 - Auto-wrapping for the supporting paragraph (Claude is instructed to keep it to 1-2 sentences that fit the foreignObject zone; if it overflows, the foreignObject clips).
