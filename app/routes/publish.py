@@ -60,7 +60,8 @@ def publish_item(
     if body.scheduled_for:
         try:
             meta_post_id = meta_publisher.schedule_page_post(
-                item["draft_text"], body.scheduled_for
+                item["draft_text"], body.scheduled_for,
+                image_url=item.get("image_url"),
             )
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Meta schedule failed: {exc}")
@@ -75,10 +76,13 @@ def publish_item(
             "status": "scheduled",
             "meta_post_id": meta_post_id,
             "scheduled_for": body.scheduled_for,
+            "image_url": item.get("image_url"),
         }
 
     try:
-        meta_post_id = meta_publisher.publish_page_post(item["draft_text"])
+        meta_post_id = meta_publisher.publish_page_post(
+            item["draft_text"], image_url=item.get("image_url"),
+        )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Meta publish failed: {exc}")
     db.update_status(
@@ -91,6 +95,7 @@ def publish_item(
         "ok": True,
         "status": "posted",
         "meta_post_id": meta_post_id,
+        "image_url": item.get("image_url"),
     }
 
 

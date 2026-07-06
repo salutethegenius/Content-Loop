@@ -54,3 +54,9 @@ CREATE INDEX IF NOT EXISTS onboarding_sessions_thread_ts_idx
 -- V2: Meta Graph API publishing
 ALTER TABLE content_items ADD COLUMN IF NOT EXISTS meta_post_id TEXT;
 ALTER TABLE content_items ADD COLUMN IF NOT EXISTS published_via TEXT DEFAULT 'meta_graph';
+
+-- V1.6: Image generation (Gemini Nano Banana 2 Lite). image_url already exists
+-- from the original V1 schema; these track provenance for debugging/regen.
+ALTER TABLE content_items ADD COLUMN IF NOT EXISTS image_prompt TEXT;
+ALTER TABLE content_items ADD COLUMN IF NOT EXISTS image_model TEXT;
+ALTER TABLE content_items ADD COLUMN IF NOT EXISTS image_generated_at TIMESTAMPTZ;

@@ -1,4 +1,5 @@
 import os
+import time
 from datetime import date
 
 import anthropic
@@ -114,6 +115,17 @@ def generate_draft(brand_config, platform):
     return response.content[0].text.strip()
 
 
-def generate_image(brand_config, platform, draft_text):
-    """Stub. V2 wires this via Auto mode across Grok, Gemini, ChatGPT."""
-    return None
+def generate_image(brand_config, platform, draft_text, item_id=None):
+    """Generate a branded image for a draft via Gemini (V1.6).
+
+    Thin wrapper around `image_generator.generate_and_save` so callers that
+    already import `generator` (e.g. a future draft-time auto-image mode)
+    don't need to know about the image_generator module. Returns
+    (image_url, prompt, model) or raises on failure.
+    """
+    from core import image_generator
+    if item_id is None:
+        # No item id means no filename can be minted; the caller is doing a
+        # speculative generation (rare). Use the brand_id + a timestamp.
+        item_id = int(time.time())
+    return image_generator.generate_and_save(brand_config, platform, draft_text, item_id)

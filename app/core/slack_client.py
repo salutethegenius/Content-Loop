@@ -140,8 +140,14 @@ def format_publish_result_blocks(original_blocks, status_text):
     return blocks
 
 
-def post_for_approval(item_id, brand_name, platform, draft_text):
-    """Post a draft to Slack with Approve/Reject buttons. Returns the message ts."""
+def post_for_approval(item_id, brand_name, platform, draft_text, image_url=None):
+    """Post a draft to Slack with Approve/Reject buttons. Returns the message ts.
+
+    If `image_url` is set (V1.6 image generation), an image block is appended
+    above the action buttons. Otherwise the draft posts as text-only with a
+    "Generate image" button alongside Approve/Reject so the human can trigger
+    one-off Gemini image generation on demand.
+    """
     bot_token = os.environ["SLACK_BOT_TOKEN"]
     channel = os.environ["SLACK_CONTENT_CHANNEL"]
 
@@ -153,26 +159,71 @@ def post_for_approval(item_id, brand_name, platform, draft_text):
                 "text": f"*{brand_name} - {platform}*\n{draft_text}",
             },
         },
-        {
-            "type": "actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "Approve"},
-                    "style": "primary",
-                    "value": f"approve_{item_id}",
-                    "action_id": "approve",
-                },
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "Reject"},
-                    "style": "danger",
-                    "value": f"reject_{item_id}",
-                    "action_id": "reject",
-                },
-            ],
-        },
     ]
+
+    if image_url:
+        blocks.append(
+            {
+                "type": "image",
+                "image_url": image_url,
+                "alt_text": f"Generated image for {brand_name} {platform} post",
+            }
+        )
+        blocks.append(
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Approve"},
+                        "style": "primary",
+                        "value": f"approve_{item_id}",
+                        "action_id": "approve",
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Reject"},
+                        "style": "danger",
+                        "value": f"reject_{item_id}",
+                        "action_id": "reject",
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Regenerate image"},
+                        "value": f"gen_image_{item_id}",
+                        "action_id": "gen_image",
+                    },
+                ],
+            }
+        )
+    else:
+        blocks.append(
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Approve"},
+                        "style": "primary",
+                        "value": f"approve_{item_id}",
+                        "action_id": "approve",
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Reject"},
+                        "style": "danger",
+                        "value": f"reject_{item_id}",
+                        "action_id": "reject",
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "Generate image"},
+                        "value": f"gen_image_{item_id}",
+                        "action_id": "gen_image",
+                    },
+                ],
+            }
+        )
 
     resp = requests.post(
         SLACK_POST_URL,
@@ -187,6 +238,58 @@ def post_for_approval(item_id, brand_name, platform, draft_text):
     if not data.get("ok"):
         raise RuntimeError(f"Slack post_for_approval failed: {data}")
     return data["ts"]
+
+
+def format_draft_with_image_blocks(original_blocks, draft_text, brand_name,
+                                   platform, item_id, image_url,
+                                   with_regenerate=True):
+    """Rebuild a draft message to show the generated image inline.
+
+    Used after the "Generate image" button runs Gemini and saves the PNG.
+    Replaces whatever was in `original_blocks` with: text section + image
+    block + action row (Approve/Reject + Regenerate image if with_regenerate).
+    """
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*{brand_name} - {platform}*\n{draft_text}",
+            },
+        },
+        {
+            "type": "image",
+            "image_url": image_url,
+            "alt_text": f"Generated image for {brand_name} {platform} post",
+        },
+    ]
+    action_elements = [
+        {
+            "type": "button",
+            "text": {"type": "plain_text", "text": "Approve"},
+            "style": "primary",
+            "value": f"approve_{item_id}",
+            "action_id": "approve",
+        },
+        {
+            "type": "button",
+            "text": {"type": "plain_text", "text": "Reject"},
+            "style": "danger",
+            "value": f"reject_{item_id}",
+            "action_id": "reject",
+        },
+    ]
+    if with_regenerate:
+        action_elements.append(
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": "Regenerate image"},
+                "value": f"gen_image_{item_id}",
+                "action_id": "gen_image",
+            }
+        )
+    blocks.append({"type": "actions", "elements": action_elements})
+    return blocks
 
 
 def post_message(channel, text=None, blocks=None, thread_ts=None):

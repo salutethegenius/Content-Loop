@@ -29,28 +29,49 @@ def _resolve(page_id, token):
     )
 
 
-def publish_page_post(message, page_id=None, token=None):
-    """Publish a text post to a Facebook Page immediately. Returns the Meta post id."""
+def publish_page_post(message, page_id=None, token=None, image_url=None):
+    """Publish a post to a Facebook Page immediately. Returns the Meta post id.
+
+    If `image_url` is provided, publishes a native photo post via the
+    `/photos` edge with `caption=message` and `url=image_url`. Otherwise
+    publishes a text-only post via the `/feed` edge.
+    """
     page_id, token = _resolve(page_id, token)
     if not page_id or not token:
         raise RuntimeError("META_PAGE_ID / META_PAGE_ACCESS_TOKEN not set")
 
-    resp = requests.post(
-        _page_endpoint(page_id, "feed"),
-        data={"message": message, "access_token": token},
-        timeout=20,
-    )
+    if image_url:
+        resp = requests.post(
+            _page_endpoint(page_id, "photos"),
+            data={
+                "url": image_url,
+                "caption": message,
+                "access_token": token,
+            },
+            timeout=20,
+        )
+    else:
+        resp = requests.post(
+            _page_endpoint(page_id, "feed"),
+            data={"message": message, "access_token": token},
+            timeout=20,
+        )
     data = resp.json()
     if "id" not in data:
         raise RuntimeError(f"Meta publish failed: {data}")
     return data["id"]
 
 
-def schedule_page_post(message, scheduled_for_iso, page_id=None, token=None):
-    """Schedule a text post on a Facebook Page. Returns the Meta post id.
+def schedule_page_post(message, scheduled_for_iso, page_id=None, token=None,
+                       image_url=None):
+    """Schedule a post on a Facebook Page. Returns the Meta post id.
 
     `scheduled_for_iso` is an ISO 8601 string (timezone-aware preferred).
     Meta requires the time to be 10 min - 6 months in the future.
+
+    If `image_url` is provided, schedules a photo post via the `/photos`
+    edge with `published=false`, `scheduled_publish_time`, `caption=message`,
+    and `url=image_url`. Otherwise schedules a text post via `/feed`.
     """
     page_id, token = _resolve(page_id, token)
     if not page_id or not token:
@@ -61,16 +82,29 @@ def schedule_page_post(message, scheduled_for_iso, page_id=None, token=None):
         dt = dt.replace(tzinfo=timezone.utc)
     unix = int(dt.astimezone(timezone.utc).timestamp())
 
-    resp = requests.post(
-        _page_endpoint(page_id, "feed"),
-        data={
-            "message": message,
-            "published": "false",
-            "scheduled_publish_time": str(unix),
-            "access_token": token,
-        },
-        timeout=20,
-    )
+    if image_url:
+        resp = requests.post(
+            _page_endpoint(page_id, "photos"),
+            data={
+                "url": image_url,
+                "caption": message,
+                "published": "false",
+                "scheduled_publish_time": str(unix),
+                "access_token": token,
+            },
+            timeout=20,
+        )
+    else:
+        resp = requests.post(
+            _page_endpoint(page_id, "feed"),
+            data={
+                "message": message,
+                "published": "false",
+                "scheduled_publish_time": str(unix),
+                "access_token": token,
+            },
+            timeout=20,
+        )
     data = resp.json()
     if "id" not in data:
         raise RuntimeError(f"Meta schedule failed: {data}")

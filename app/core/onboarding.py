@@ -94,6 +94,17 @@ PHASES = [
             "Anything else Nova should know that has not come up yet?",
         ],
     ),
+    (
+        "visual",
+        "Phase 7 - Visual identity (for image generation)",
+        [
+            "What are your brand colors? Give 2 to 5 hex codes (e.g. #003366, #FFFFFF, #F58220), in priority order.",
+            "What typography style fits the brand? (e.g. 'geometric sans-serif, bold weight, all-caps headlines' or 'serif, editorial, mixed case'.)",
+            "How should the wordmark or logo appear on generated images? (e.g. 'BICCU' bottom-right, or 'no wordmark, just typography'.)",
+            "What is the layout/feel for image posts? (e.g. 'centered bold headline on solid brand-color background' or 'split layout, text left, accent color right'.)",
+            "Anything Nova should avoid in generated images? (e.g. 'no stock photos, no clipart, no gradients, no people'.)",
+        ],
+    ),
 ]
 
 PHASE_KEYS = [p[0] for p in PHASES]
@@ -251,7 +262,15 @@ def synthesize_brand(brand_id, display_name, answers):
         "Default to ['facebook','instagram'] unless the answers explicitly request LinkedIn.\n"
         "- posting_cadence_days: integer\n"
         "- image_style_prompt: one-sentence visual direction\n"
-        "- content_pillars: array of {pillar, description} objects derived from the answers\n\n"
+        "- content_pillars: array of {pillar, description} objects derived from the answers\n"
+        "- visual_identity: object with the following keys (infer sensibly from the "
+        "Phase 7 answers; never invent hex codes the user did not provide, fall back "
+        "to neutral defaults like ['#000000','#FFFFFF'] only if the brand gave nothing):\n"
+        "    * colors: array of hex strings, 2-5 entries, in priority order\n"
+        "    * typography_style: short descriptive string\n"
+        "    * wordmark_text: the wordmark/logo text to render on images (or empty string)\n"
+        "    * layout: short descriptive string for the image layout/feel\n"
+        "    * avoid: array of strings, things to never include in generated images\n\n"
         "Rules: no em-dashes anywhere. Follow the brand's own voice rules in the output. "
         "If the answers are silent on a field, infer sensibly from the brand's industry "
         "and tone. Never invent rates, products, or promotions."

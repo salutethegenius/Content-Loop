@@ -69,6 +69,32 @@ def update_status(
         conn.close()
 
 
+def update_content_image(item_id, image_url, image_prompt=None, image_model=None):
+    """Record a generated image against a content item.
+
+    Called after the on-demand "Generate image" Slack button runs Gemini.
+    All of image_url / image_prompt / image_model are persisted so we can
+    debug prompts and re-run with a different model without losing history.
+    """
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE content_items
+                   SET image_url = %s,
+                       image_prompt = COALESCE(%s, image_prompt),
+                       image_model = COALESCE(%s, image_model),
+                       image_generated_at = now()
+                 WHERE id = %s
+                """,
+                (image_url, image_prompt, image_model, item_id),
+            )
+            conn.commit()
+    finally:
+        conn.close()
+
+
 def get_content_item(item_id):
     """Return a content_items row by id, or None. Includes meta_post_id."""
     conn = get_conn()
@@ -78,7 +104,8 @@ def get_content_item(item_id):
                 """
                 SELECT id, brand, platform, draft_text, image_url, status,
                        slack_message_ts, scheduled_for, created_at,
-                       approved_at, posted_at, meta_post_id, published_via
+                       approved_at, posted_at, meta_post_id, published_via,
+                       image_prompt, image_model, image_generated_at
                   FROM content_items
                  WHERE id = %s
                 """,
@@ -101,6 +128,9 @@ def get_content_item(item_id):
                 "posted_at": row[10],
                 "meta_post_id": row[11],
                 "published_via": row[12],
+                "image_prompt": row[13],
+                "image_model": row[14],
+                "image_generated_at": row[15],
             }
     finally:
         conn.close()

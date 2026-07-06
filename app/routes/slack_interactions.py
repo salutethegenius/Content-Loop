@@ -10,6 +10,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from core import db, generation_flow, onboarding
 from core.db import update_status
 from core.slack_client import (
+    format_draft_with_image_blocks,
     format_publish_result_blocks,
     format_resolved_approval_blocks,
     format_schedule_picker_blocks,
@@ -87,6 +88,21 @@ async def handle_interaction(request: Request, background_tasks: BackgroundTasks
         background_tasks.add_task(
             _handle_approval, item_id, status, user_id,
             channel, message.get("ts"), message.get("blocks"),
+        )
+        return {"ok": True}
+
+    # --- Generate / regenerate image (V1.6) ---
+    if action_id == "gen_image":
+        try:
+            item_id = int(value.rsplit("_", 1)[1])
+        except (IndexError, ValueError):
+            raise HTTPException(status_code=400, detail="Bad action value")
+        # Ack immediately; the Gemini call takes a few seconds and Slack
+        # would otherwise drop the message update. Background task shows
+        # "Generating..." then the final image-inlined message.
+        background_tasks.add_task(
+            _handle_generate_image, item_id, channel, message.get("ts"),
+            message.get("blocks"),
         )
         return {"ok": True}
 
@@ -242,6 +258,105 @@ def _handle_onboarding_action(action_id, brand_id, channel, thread_ts):
                 text=f"Regeneration failed: {exc}",
                 thread_ts=thread_ts,
             )
+
+
+def _handle_generate_image(item_id, channel, message_ts, original_blocks):
+    """Background task: generate an image for a draft via Gemini, persist it,
+    and update the Slack message in place to show the image inline.
+
+    Pulled by the 'Generate image' / 'Regenerate image' button on a draft
+    message. Shows an intermediate 'Generating...' state, then the final
+    image-inlined message with Approve/Reject + Regenerate image buttons.
+    """
+    from core import image_generator
+    from core.brand_loader import get_brand_by_id
+
+    item = db.get_content_item(item_id)
+    if not item:
+        try:
+            update_message(
+                channel, message_ts,
+                blocks=format_publish_result_blocks(
+                    original_blocks, ":x: Item not found."
+                ),
+            )
+        except Exception:
+            pass
+        return
+
+    # Show an intermediate state so the user sees feedback within a second.
+    try:
+        update_message(
+            channel, message_ts,
+            blocks=format_publish_result_blocks(
+                original_blocks, ":hourglass_flowing_sand: Generating image with Gemini..."
+            ),
+        )
+    except Exception:
+        pass
+
+    brand = get_brand_by_id(item["brand"])
+    if not brand:
+        try:
+            update_message(
+                channel, message_ts,
+                blocks=format_publish_result_blocks(
+                    original_blocks,
+                    f":x: Brand `{item['brand']}` not found or inactive.",
+                ),
+            )
+        except Exception:
+            pass
+        return
+
+    try:
+        image_url, prompt, model_used = image_generator.generate_and_save(
+            brand, item["platform"], item["draft_text"], item_id,
+        )
+    except Exception as exc:
+        try:
+            update_message(
+                channel, message_ts,
+                blocks=format_publish_result_blocks(
+                    original_blocks, f":x: Image generation failed: {exc}"
+                ),
+            )
+        except Exception:
+            pass
+        return
+
+    if not image_url:
+        try:
+            update_message(
+                channel, message_ts,
+                blocks=format_publish_result_blocks(
+                    original_blocks,
+                    ":x: Image generated but no public URL configured "
+                    "(IMAGE_BASE_URL not set on the server).",
+                ),
+            )
+        except Exception:
+            pass
+        return
+
+    db.update_content_image(item_id, image_url, prompt, model_used)
+
+    try:
+        new_blocks = format_draft_with_image_blocks(
+            original_blocks,
+            item["draft_text"],
+            brand.get("display_name") or item["brand"],
+            item["platform"],
+            item_id,
+            image_url,
+        )
+        update_message(channel, message_ts, blocks=new_blocks)
+    except Exception as exc:
+        post_message(
+            channel,
+            text=f"(image generated and saved at {image_url}, but Slack message update failed: {exc})",
+            thread_ts=message_ts,
+        )
 
 
 def _handle_onboard_from_picker(brand_id, channel, thread_ts):
@@ -400,7 +515,9 @@ def _handle_publish_now(item_id, channel, message_ts, original_blocks):
         pass
 
     try:
-        meta_post_id = meta_publisher.publish_page_post(item["draft_text"])
+        meta_post_id = meta_publisher.publish_page_post(
+            item["draft_text"], image_url=item.get("image_url"),
+        )
     except Exception as exc:
         update_message(
             channel, message_ts,
@@ -477,7 +594,9 @@ def _handle_publish_schedule(item_id, selected_ts, channel, message_ts,
         pass
 
     try:
-        meta_post_id = meta_publisher.schedule_page_post(item["draft_text"], iso)
+        meta_post_id = meta_publisher.schedule_page_post(
+            item["draft_text"], iso, image_url=item.get("image_url"),
+        )
     except Exception as exc:
         update_message(
             channel, message_ts,

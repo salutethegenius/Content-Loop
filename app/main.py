@@ -14,8 +14,9 @@ from routes.publish import router as publish_router
 from routes.slack_commands import router as slack_commands_router
 from routes.slack_events import router as slack_events_router
 from routes.slack_interactions import router as slack_router
+from routes.static import router as static_router
 
-app = FastAPI(title="Content Loop Agent", version="1.5.0")
+app = FastAPI(title="Content Loop Agent", version="1.6.0")
 
 
 @app.get("/")
@@ -30,3 +31,4 @@ app.include_router(publish_router)
 app.include_router(slack_commands_router)
 app.include_router(slack_events_router)
 app.include_router(slack_router)
+app.include_router(static_router)

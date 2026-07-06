@@ -4,3 +4,4 @@ anthropic>=0.40
 requests>=2.31
 psycopg2-binary>=2.9
 python-dotenv>=1.0
+google-genai>=1.3
