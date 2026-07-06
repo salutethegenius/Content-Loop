@@ -116,7 +116,8 @@ def generate_draft(brand_config, platform):
 
 
 def generate_image(brand_config, platform, draft_text, item_id=None):
-    """Generate a branded image for a draft via Gemini (V1.6).
+    """Generate a branded image for a draft via the design-system pipeline
+    (Claude slot-fill + fixed SVG template + cairosvg rasterize, V1.7).
 
     Thin wrapper around `image_generator.generate_and_save` so callers that
     already import `generator` (e.g. a future draft-time auto-image mode)

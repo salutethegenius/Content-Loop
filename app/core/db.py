@@ -72,9 +72,10 @@ def update_status(
 def update_content_image(item_id, image_url, image_prompt=None, image_model=None):
     """Record a generated image against a content item.
 
-    Called after the on-demand "Generate image" Slack button runs Gemini.
-    All of image_url / image_prompt / image_model are persisted so we can
-    debug prompts and re-run with a different model without losing history.
+    Called after the on-demand "Generate image" Slack button runs the
+    Claude slot-fill + cairosvg pipeline. All of image_url / image_prompt /
+    image_model are persisted so we can debug prompts and re-run with a
+    different model without losing history.
     """
     conn = get_conn()
     try:

@@ -136,20 +136,30 @@ def _normalize_slots(slots):
         if text:
             emp = bool(raw_emphasis[i]) if i < len(raw_emphasis) else False
             paired.append((text, emp))
-    # Hard-split any line a model made too long (>16 chars) at the space
-    # nearest the middle, so the auto-fit never has to shrink below the
-    # readable minimum. Both halves keep the original emphasis flag.
+    # Hard-split any line a model made too long (>16 chars). Split at the
+    # space nearest the middle; both halves keep the original emphasis flag.
+    # Recursive so a very long single line gets split into as many pieces as
+    # needed (rare, but a model could ignore the 14-char instruction).
+    def _split_line(text, emp):
+        if len(text) <= 16 or " " not in text:
+            return [(text, emp)]
+        mid = len(text) // 2
+        spaces = [i for i, ch in enumerate(text) if ch == " "]
+        split_at = min(spaces, key=lambda i: abs(i - mid))
+        left = text[:split_at].strip()
+        right = text[split_at:].strip()
+        return _split_line(left, emp) + _split_line(right, emp)
+
     split_pairs = []
     for text, emp in paired:
-        if len(text) > 16 and " " in text and len(split_pairs) < 3:
-            mid = len(text) // 2
-            spaces = [i for i, ch in enumerate(text) if ch == " "]
-            split_at = min(spaces, key=lambda i: abs(i - mid))
-            split_pairs.append((text[:split_at].strip(), emp))
-            split_pairs.append((text[split_at:].strip(), emp))
-        else:
-            split_pairs.append((text, emp))
-    split_pairs = split_pairs[:4]
+        split_pairs.extend(_split_line(text, emp))
+    # Cap to 4 lines. If content has to be dropped, mark the last kept line
+    # with an ellipsis so the reader knows the headline was truncated.
+    if len(split_pairs) > 4:
+        split_pairs = split_pairs[:4]
+        if split_pairs[3][0]:
+            last_text, last_emp = split_pairs[3]
+            split_pairs[3] = (last_text.rstrip(".,;: ") + "…", last_emp)
     while len(split_pairs) < 4:
         split_pairs.append(("", False))
 

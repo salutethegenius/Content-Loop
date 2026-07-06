@@ -97,9 +97,9 @@ async def handle_interaction(request: Request, background_tasks: BackgroundTasks
             item_id = int(value.rsplit("_", 1)[1])
         except (IndexError, ValueError):
             raise HTTPException(status_code=400, detail="Bad action value")
-        # Ack immediately; the Gemini call takes a few seconds and Slack
-        # would otherwise drop the message update. Background task shows
-        # "Generating..." then the final image-inlined message.
+        # Ack immediately; the Claude slot-fill + rasterize call takes a few
+        # seconds and Slack would otherwise drop the message update.
+        # Background task shows "Generating..." then the final image-inlined message.
         background_tasks.add_task(
             _handle_generate_image, item_id, channel, message.get("ts"),
             message.get("blocks"),
@@ -261,8 +261,8 @@ def _handle_onboarding_action(action_id, brand_id, channel, thread_ts):
 
 
 def _handle_generate_image(item_id, channel, message_ts, original_blocks):
-    """Background task: generate an image for a draft via Gemini, persist it,
-    and update the Slack message in place to show the image inline.
+    """Background task: generate an image for a draft via Claude slot-filling,
+    persist it, and update the Slack message in place to show the image inline.
 
     Pulled by the 'Generate image' / 'Regenerate image' button on a draft
     message. Shows an intermediate 'Generating...' state, then the final
@@ -289,7 +289,7 @@ def _handle_generate_image(item_id, channel, message_ts, original_blocks):
         update_message(
             channel, message_ts,
             blocks=format_publish_result_blocks(
-                original_blocks, ":hourglass_flowing_sand: Generating image with Gemini..."
+                original_blocks, ":hourglass_flowing_sand: Generating image with Claude..."
             ),
         )
     except Exception:

@@ -146,7 +146,7 @@ def post_for_approval(item_id, brand_name, platform, draft_text, image_url=None)
     If `image_url` is set (V1.6 image generation), an image block is appended
     above the action buttons. Otherwise the draft posts as text-only with a
     "Generate image" button alongside Approve/Reject so the human can trigger
-    one-off Gemini image generation on demand.
+    one-off Claude design-system image generation on demand.
     """
     bot_token = os.environ["SLACK_BOT_TOKEN"]
     channel = os.environ["SLACK_CONTENT_CHANNEL"]
@@ -245,7 +245,8 @@ def format_draft_with_image_blocks(original_blocks, draft_text, brand_name,
                                    with_regenerate=True):
     """Rebuild a draft message to show the generated image inline.
 
-    Used after the "Generate image" button runs Gemini and saves the PNG.
+    Used after the "Generate image" button runs the Claude slot-fill pipeline
+    and saves the PNG.
     Replaces whatever was in `original_blocks` with: text section + image
     block + action row (Approve/Reject + Regenerate image if with_regenerate).
     """
