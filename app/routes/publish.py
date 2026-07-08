@@ -44,11 +44,6 @@ def publish_item(
     item = db.get_content_item(body.item_id)
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
-    if item["status"] != "approved":
-        raise HTTPException(
-            status_code=400,
-            detail=f"Item {body.item_id} status is '{item['status']}', must be 'approved'",
-        )
     if item["platform"] != "facebook":
         raise HTTPException(
             status_code=400,
@@ -57,13 +52,41 @@ def publish_item(
     if not item.get("draft_text"):
         raise HTTPException(status_code=400, detail="Item has no draft_text")
 
+    # Atomically claim the item so a duplicate/retried request cannot call
+    # the Meta Graph API twice for the same item.
+    claim_status = "scheduling" if body.scheduled_for else "publishing"
+    if not db.claim_item_status(body.item_id, claim_status, expected_status="approved"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Item {body.item_id} status is '{item['status']}', must be 'approved'",
+        )
+
     if body.scheduled_for:
         try:
             meta_post_id = meta_publisher.schedule_page_post(
                 item["draft_text"], body.scheduled_for,
                 image_url=item.get("image_url"),
             )
+        except meta_publisher.ScheduleVerificationFailed as exc:
+            # Meta most likely created the post; persist it as scheduled so a
+            # retry cannot create a duplicate, but flag it for a manual check.
+            db.update_status(
+                body.item_id,
+                "scheduled",
+                meta_post_id=exc.post_id,
+                scheduled_for=body.scheduled_for,
+            )
+            return {
+                "ok": True,
+                "status": "scheduled",
+                "verified": False,
+                "meta_post_id": exc.post_id,
+                "scheduled_for": body.scheduled_for,
+                "image_url": item.get("image_url"),
+                "warning": str(exc),
+            }
         except Exception as exc:
+            db.update_status(body.item_id, "approved")
             raise HTTPException(status_code=502, detail=f"Meta schedule failed: {exc}")
         db.update_status(
             body.item_id,
@@ -84,6 +107,7 @@ def publish_item(
             item["draft_text"], image_url=item.get("image_url"),
         )
     except Exception as exc:
+        db.update_status(body.item_id, "approved")
         raise HTTPException(status_code=502, detail=f"Meta publish failed: {exc}")
     db.update_status(
         body.item_id,

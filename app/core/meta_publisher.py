@@ -25,6 +25,18 @@ from datetime import datetime, timezone
 
 import requests
 
+class ScheduleVerificationFailed(RuntimeError):
+    """Meta accepted the schedule call and returned a post id, but the
+    follow-up verification could not confirm it as a visible scheduled post
+    (e.g. Graph API read-after-write lag). The post likely WAS created on
+    Meta's side, so callers must persist `post_id` against the item (instead
+    of leaving it retriable) to avoid a duplicate post on retry."""
+
+    def __init__(self, post_id, message):
+        super().__init__(message)
+        self.post_id = post_id
+
+
 GRAPH_BASE = "https://graph.facebook.com"
 API_VERSION = os.environ.get("META_API_VERSION", "v23.0")
 
@@ -184,15 +196,19 @@ def schedule_page_post(message, scheduled_for_iso, page_id=None, token=None,
     data = resp.json()
     post_id = _extract_post_id(data, "Meta schedule failed")
 
-    # Soft verify: confirm the post is queryable as scheduled. Failures here
-    # are logged via RuntimeError so Slack shows the real problem instead of
-    # a false "Scheduled" success.
+    # Soft verify: confirm the post is queryable as scheduled. Raise a
+    # distinguishable ScheduleVerificationFailed (carrying post_id) rather
+    # than a bare RuntimeError, so callers can still persist the post id
+    # against the item instead of leaving it retriable — Meta most likely
+    # DID create the post (this can be read-after-write lag on Meta's side),
+    # so blindly retrying on a bare failure would create a duplicate.
     try:
         verify_scheduled_post(post_id, page_id=page_id, token=token)
     except Exception as exc:
-        raise RuntimeError(
+        raise ScheduleVerificationFailed(
+            post_id,
             f"Meta returned id `{post_id}` but it is not visible as a "
-            f"scheduled post (Planner will not show it): {exc}"
+            f"scheduled post yet (Planner may not show it): {exc}",
         ) from exc
     return post_id
 
