@@ -3,7 +3,7 @@
 from core import db
 from core.brand_loader import get_brand_by_id
 from core.content_loop import generate_for_platforms
-from core.slack_client import post_message
+from core.slack_client import format_queue_blocks, post_message
 
 PLATFORM_ORDER = ["facebook", "instagram", "linkedin"]
 PRIMARY_PLATFORMS = ["facebook", "instagram"]
@@ -287,3 +287,15 @@ def handle_confirm(brand_id, platforms, channel, thread_ts):
         ),
         thread_ts=thread_ts,
     )
+    # Surface the actionable queue so the human can open / publish / schedule
+    # without hunting through the channel.
+    try:
+        items = db.list_actionable_items(limit=20)
+        if items:
+            post_message(
+                channel,
+                blocks=format_queue_blocks(items),
+                text=f"Approved posts queue ({len(items)})",
+            )
+    except Exception:
+        pass

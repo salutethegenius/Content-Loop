@@ -140,6 +140,173 @@ def format_publish_result_blocks(original_blocks, status_text):
     return blocks
 
 
+
+def format_queue_blocks(items):
+    """Summary table of approved/scheduled posts with Open + Refresh buttons."""
+    blocks = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": f"Approved posts queue ({len(items)})",
+            },
+        }
+    ]
+    if not items:
+        blocks.append(
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "_No actionable posts. Approve a draft first._",
+                },
+            }
+        )
+        return blocks
+
+    for it in items:
+        first_line = ((it.get("draft_text") or "").splitlines() or [""])[0]
+        preview = first_line[:80] + ("…" if len(first_line) > 80 else "")
+        name = it.get("display_name") or it.get("brand") or "?"
+        img = (
+            ":white_check_mark: image"
+            if it.get("image_url")
+            else ":camera: no image"
+        )
+        sched = ""
+        if it.get("scheduled_for"):
+            sf = it["scheduled_for"]
+            try:
+                sched = f":calendar: {sf:%Y-%m-%d %H:%M UTC}"
+            except Exception:
+                sched = f":calendar: {sf}"
+        status_line = f"{it.get('status', '?')} {sched}".strip()
+        blocks.append(
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"*#{it['id']}* — {name} • {it.get('platform', '?')}\n"
+                        f"{preview or '_empty draft_'}"
+                    ),
+                },
+                "fields": [
+                    {"type": "mrkdwn", "text": f"*Status:*\n{status_line}"},
+                    {"type": "mrkdwn", "text": f"*Image:*\n{img}"},
+                ],
+                "accessory": {
+                    "type": "button",
+                    "style": "primary",
+                    "text": {"type": "plain_text", "text": "Open"},
+                    "value": f"queue_open_{it['id']}",
+                    "action_id": "queue_open",
+                },
+            }
+        )
+
+    blocks.append(
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Refresh queue"},
+                    "value": "queue_refresh",
+                    "action_id": "queue_refresh",
+                }
+            ],
+        }
+    )
+    return blocks
+
+
+def format_approved_action_blocks(item):
+    """Re-render a single approved/scheduled post with action buttons.
+
+    Reuses existing action_ids (gen_image, publish_now, publish_schedule) so
+    the interaction handlers work unchanged.
+    """
+    brand_name = item.get("display_name") or item.get("brand") or "?"
+    platform = item.get("platform") or "?"
+    draft = item.get("draft_text") or ""
+    item_id = item["id"]
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*{brand_name} - {platform}*\n{draft}",
+            },
+        }
+    ]
+    if item.get("image_url"):
+        blocks.append(
+            {
+                "type": "image",
+                "image_url": item["image_url"],
+                "alt_text": f"Generated image for {brand_name} {platform} post",
+            }
+        )
+    actions = []
+    if item.get("image_url"):
+        actions.append(
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": "Regenerate image"},
+                "value": f"gen_image_{item_id}",
+                "action_id": "gen_image",
+            }
+        )
+    else:
+        actions.append(
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": "Generate image"},
+                "value": f"gen_image_{item_id}",
+                "action_id": "gen_image",
+            }
+        )
+    if platform == "facebook" and item.get("status") == "approved":
+        actions.append(
+            {
+                "type": "button",
+                "style": "primary",
+                "text": {"type": "plain_text", "text": "Publish now"},
+                "value": f"publish_now_{item_id}",
+                "action_id": "publish_now",
+            }
+        )
+        actions.append(
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": "Schedule"},
+                "value": f"publish_schedule_{item_id}",
+                "action_id": "publish_schedule",
+            }
+        )
+    elif item.get("status") == "scheduled" and item.get("scheduled_for"):
+        sf = item["scheduled_for"]
+        try:
+            when = f"{sf:%Y-%m-%d %H:%M UTC}"
+        except Exception:
+            when = str(sf)
+        blocks.append(
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": f":calendar: Already scheduled for {when}",
+                    }
+                ],
+            }
+        )
+    blocks.append({"type": "actions", "elements": actions})
+    return blocks
+
+
+
 def post_for_approval(item_id, brand_name, platform, draft_text, image_url=None):
     """Post a draft to Slack with Approve/Reject buttons. Returns the message ts.
 

@@ -10,8 +10,10 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from core import db, generation_flow, onboarding
 from core.db import update_status
 from core.slack_client import (
+    format_approved_action_blocks,
     format_draft_with_image_blocks,
     format_publish_result_blocks,
+    format_queue_blocks,
     format_resolved_approval_blocks,
     format_schedule_picker_blocks,
     post_message,
@@ -139,13 +141,18 @@ async def handle_interaction(request: Request, background_tasks: BackgroundTasks
             item_id = int(value.rsplit("_", 1)[1])
         except (IndexError, ValueError):
             raise HTTPException(status_code=400, detail="Bad action value")
-        # Pull the datetimepicker value out of state.values
-        selected_ts = _extract_datetimepicker_value(payload, item_id)
+        # Prefer Slack state.values; fall back to initial_date_time from the
+        # message blocks (Slack omits selected_date_time until the user
+        # interacts with the picker).
+        selected_ts = _extract_datetimepicker_value(
+            payload, item_id, message.get("blocks"),
+        )
         if not selected_ts:
             background_tasks.add_task(
                 _handle_schedule_error, channel, message.get("ts"),
                 message.get("blocks"),
-                ":x: No time selected. Click Schedule again.",
+                ":x: No time selected. Pick a time below, then Confirm.",
+                item_id,
             )
             return {"ok": True}
         background_tasks.add_task(
@@ -156,6 +163,23 @@ async def handle_interaction(request: Request, background_tasks: BackgroundTasks
 
     # datetimepicker change events — Slack still requires a 200 ack
     if action_id and action_id.startswith("publish_dt_"):
+        return {"ok": True}
+
+    # --- Queue actions (approved-posts summary) ---
+    if action_id == "queue_open":
+        try:
+            item_id = int(value.rsplit("_", 1)[1])
+        except (IndexError, ValueError):
+            raise HTTPException(status_code=400, detail="Bad action value")
+        background_tasks.add_task(
+            _handle_queue_open, item_id, channel, message.get("ts"),
+        )
+        return {"ok": True}
+
+    if action_id == "queue_refresh":
+        background_tasks.add_task(
+            _handle_queue_refresh, channel, message.get("ts"),
+        )
         return {"ok": True}
 
     # --- Onboarding actions (defer slow work to background) ---
@@ -432,16 +456,30 @@ def _handle_approval(item_id, status, user_id, channel, message_ts,
         )
 
 
-def _extract_datetimepicker_value(payload, item_id):
-    """Read the selected unix timestamp from a datetimepicker in the
-    interaction's state.values, keyed by the publish_dt_{item_id} action id."""
+def _extract_datetimepicker_value(payload, item_id, original_blocks=None):
+    """Read the selected unix timestamp from a datetimepicker.
+
+    Prefer Slack state.values (set when the user interacts with the picker).
+    Fall back to initial_date_time from the message blocks — Slack does not
+    echo selected_date_time until the picker is touched, even when
+    initial_date_time is shown in the UI.
+    """
     state = payload.get("state") or {}
     values = state.get("values") or {}
+    target = f"publish_dt_{item_id}"
     for block_values in values.values():
         for action_id, action_state in block_values.items():
-            if action_id == f"publish_dt_{item_id}":
+            if action_id == target:
                 selected = (action_state or {}).get("selected_date_time")
-                return selected
+                if selected:
+                    return selected
+
+    for b in original_blocks or []:
+        if b.get("type") != "actions":
+            continue
+        for el in b.get("elements", []):
+            if el.get("action_id") == target and el.get("initial_date_time"):
+                return el["initial_date_time"]
     return None
 
 
@@ -459,13 +497,78 @@ def _handle_show_schedule_picker(item_id, channel, message_ts, original_blocks):
         )
 
 
-def _handle_schedule_error(channel, message_ts, original_blocks, status_text):
-    """Background task: show a schedule error message in place."""
-    blocks = format_publish_result_blocks(original_blocks, status_text)
+def _handle_schedule_error(channel, message_ts, original_blocks, status_text,
+                            item_id=None):
+    """Background task: show a schedule error, keeping Schedule recoverable.
+
+    Prefer re-showing the picker (with a context error line) so the user can
+    retry without hunting for the original Approve message.
+    """
+    if item_id is not None:
+        blocks = format_schedule_picker_blocks(item_id, original_blocks)
+        # Insert error context above the picker actions
+        blocks.insert(
+            -1,
+            {
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": status_text}],
+            },
+        )
+    else:
+        blocks = format_publish_result_blocks(original_blocks, status_text)
     try:
         update_message(channel, message_ts, blocks=blocks)
     except Exception:
         pass
+
+
+def _handle_queue_open(item_id, channel, thread_ts):
+    """Background task: open a queue row as a threaded full-draft reply."""
+    item = db.get_content_item(item_id)
+    if not item:
+        post_message(
+            channel,
+            text=f"(item #{item_id} not found)",
+            thread_ts=thread_ts,
+        )
+        return
+    # Prefer friendly display_name from brands when available.
+    try:
+        from core.brand_loader import get_brand_by_id
+        brand = get_brand_by_id(item.get("brand"))
+        if brand:
+            item = dict(item)
+            item["display_name"] = brand.get("display_name") or item["brand"]
+    except Exception:
+        pass
+    blocks = format_approved_action_blocks(item)
+    try:
+        post_message(
+            channel,
+            blocks=blocks,
+            text=f"Post #{item_id} — {item.get('platform', '?')}",
+            thread_ts=thread_ts,
+        )
+    except Exception as exc:
+        post_message(
+            channel,
+            text=f"(could not open item #{item_id}: {exc})",
+            thread_ts=thread_ts,
+        )
+
+
+def _handle_queue_refresh(channel, message_ts):
+    """Background task: re-render the queue message in place."""
+    try:
+        items = db.list_actionable_items(limit=20)
+        blocks = format_queue_blocks(items)
+        update_message(channel, message_ts, blocks=blocks)
+    except Exception as exc:
+        post_message(
+            channel,
+            text=f"(could not refresh queue: {exc})",
+            thread_ts=message_ts,
+        )
 
 
 def _handle_publish_now(item_id, channel, message_ts, original_blocks):

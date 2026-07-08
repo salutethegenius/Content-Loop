@@ -157,6 +157,48 @@ def get_last_posted(brand_id):
         conn.close()
 
 
+
+def list_actionable_items(limit=20):
+    """Return approved + scheduled items, newest approved_at first.
+
+    Joins brands for display_name when available; falls back to brand_id.
+    """
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT c.id, c.brand, c.platform, c.draft_text, c.image_url,
+                       c.status, c.scheduled_for, c.approved_at, c.created_at,
+                       COALESCE(b.config->>'display_name', c.brand) AS display_name
+                  FROM content_items c
+                  LEFT JOIN brands b ON b.brand_id = c.brand
+                 WHERE c.status IN ('approved', 'scheduled')
+                 ORDER BY c.approved_at DESC NULLS LAST, c.id DESC
+                 LIMIT %s
+                """,
+                (limit,),
+            )
+            rows = cur.fetchall()
+            return [
+                {
+                    "id": r[0],
+                    "brand": r[1],
+                    "platform": r[2],
+                    "draft_text": r[3],
+                    "image_url": r[4],
+                    "status": r[5],
+                    "scheduled_for": r[6],
+                    "approved_at": r[7],
+                    "created_at": r[8],
+                    "display_name": r[9],
+                }
+                for r in rows
+            ]
+    finally:
+        conn.close()
+
+
 # --- DB-backed brand configs (onboarding output) ---
 
 

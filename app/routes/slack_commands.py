@@ -8,6 +8,7 @@ Configure in the Slack app (api.slack.com/apps → your app → Slash Commands):
 Subcommands:
   /nova              -> post a brand picker to #nova-agent (same as /generate/start)
   /nova generate     -> same as above
+  /nova queue        -> post a summary table of approved/scheduled posts
   /nova help         -> ephemeral help text
 
 The endpoint verifies the Slack HMAC signature (no X-Cron-Secret needed —
@@ -23,9 +24,10 @@ from urllib.parse import parse_qs
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from core import db
 from core.brand_loader import get_active_brands
 from core.generation_flow import format_brand_picker_blocks
-from core.slack_client import post_message
+from core.slack_client import format_queue_blocks, post_message
 from core.slack_verify import verify_slack_signature
 
 router = APIRouter()
@@ -63,6 +65,8 @@ async def handle_slash_command(request: Request):
                     "*Nova commands*\n"
                     "• `/nova` — start a content generation flow (pick a brand, "
                     "pick platforms, Nova drafts posts for approval)\n"
+                    "• `/nova queue` — show approved/scheduled posts with Open "
+                    "buttons (generate image, publish, schedule)\n"
                     "• `/nova help` — this message\n\n"
                     "Drafts appear in this channel with Approve / Reject buttons. "
                     "Approved Facebook drafts also get Publish now / Schedule buttons."
@@ -112,13 +116,49 @@ async def handle_slash_command(request: Request):
             }
         )
 
+
+    # /nova queue -> post approved/scheduled summary table
+    if text == "queue":
+        channel = os.environ.get("SLACK_CONTENT_CHANNEL", "")
+        if not channel:
+            return JSONResponse(
+                content={
+                    "response_type": "ephemeral",
+                    "text": "SLACK_CONTENT_CHANNEL is not configured on the server.",
+                }
+            )
+        try:
+            items = db.list_actionable_items(limit=20)
+            blocks = format_queue_blocks(items)
+            post_message(
+                channel,
+                blocks=blocks,
+                text=f"Approved posts queue ({len(items)})",
+            )
+        except Exception as exc:
+            return JSONResponse(
+                content={
+                    "response_type": "ephemeral",
+                    "text": f"Could not post the queue: {exc}",
+                }
+            )
+        return JSONResponse(
+            content={
+                "response_type": "ephemeral",
+                "text": (
+                    f"Posted the approved posts queue to <#{channel}> "
+                    f"({len(items)} item{'s' if len(items) != 1 else ''})."
+                ),
+            }
+        )
+
     # Unknown subcommand
     return JSONResponse(
         content={
             "response_type": "ephemeral",
             "text": (
                 f"Did not understand `/nova {text}`. Try `/nova` to start a "
-                "generation flow, or `/nova help`."
+                "generation flow, `/nova queue` for approved posts, or `/nova help`."
             ),
         }
     )
