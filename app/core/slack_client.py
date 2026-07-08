@@ -90,7 +90,7 @@ def format_schedule_picker_blocks(item_id, original_blocks):
             "block_id": "schedule_picker_hint",
             "text": {
                 "type": "mrkdwn",
-                "text": "Pick a time to schedule this post (10 min - 6 months out).",
+                "text": "Pick a time to schedule this post (10 min – 30 days out).",
             },
         }
     )

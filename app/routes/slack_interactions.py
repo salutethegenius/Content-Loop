@@ -460,10 +460,12 @@ def _extract_datetimepicker_value(payload, item_id, original_blocks=None):
     """Read the selected unix timestamp from a datetimepicker.
 
     Prefer Slack state.values (set when the user interacts with the picker).
-    Fall back to initial_date_time from the message blocks — Slack does not
-    echo selected_date_time until the picker is touched, even when
-    initial_date_time is shown in the UI.
+    If untouched, return a fresh now+1h default — do NOT reuse the stale
+    initial_date_time baked into the message at picker-open time (that can
+    fall inside Meta's 10-minute minimum after the message sits open).
     """
+    import time as _time
+
     state = payload.get("state") or {}
     values = state.get("values") or {}
     target = f"publish_dt_{item_id}"
@@ -474,52 +476,9 @@ def _extract_datetimepicker_value(payload, item_id, original_blocks=None):
                 if selected:
                     return selected
 
-    for b in original_blocks or []:
-        if b.get("type") != "actions":
-            continue
-        for el in b.get("elements", []):
-            if el.get("action_id") == target and el.get("initial_date_time"):
-                return el["initial_date_time"]
-    return None
+    # Fresh default if the picker was never touched.
+    return int(_time.time()) + 3600
 
-
-def _handle_show_schedule_picker(item_id, channel, message_ts, original_blocks):
-    """Background task: swap the draft message in place to show the
-    datetimepicker + Confirm schedule button."""
-    picker_blocks = format_schedule_picker_blocks(item_id, original_blocks)
-    try:
-        update_message(channel, message_ts, blocks=picker_blocks)
-    except Exception as exc:
-        post_message(
-            channel,
-            text=f"(could not show schedule picker: {exc})",
-            thread_ts=message_ts,
-        )
-
-
-def _handle_schedule_error(channel, message_ts, original_blocks, status_text,
-                            item_id=None):
-    """Background task: show a schedule error, keeping Schedule recoverable.
-
-    Prefer re-showing the picker (with a context error line) so the user can
-    retry without hunting for the original Approve message.
-    """
-    if item_id is not None:
-        blocks = format_schedule_picker_blocks(item_id, original_blocks)
-        # Insert error context above the picker actions
-        blocks.insert(
-            -1,
-            {
-                "type": "context",
-                "elements": [{"type": "mrkdwn", "text": status_text}],
-            },
-        )
-    else:
-        blocks = format_publish_result_blocks(original_blocks, status_text)
-    try:
-        update_message(channel, message_ts, blocks=blocks)
-    except Exception:
-        pass
 
 
 def _handle_queue_open(item_id, channel, thread_ts):
@@ -684,6 +643,20 @@ def _handle_publish_schedule(item_id, selected_ts, channel, message_ts,
     # for scheduled_publish_time, but our meta_publisher takes an ISO string.
     scheduled_dt = datetime.fromtimestamp(selected_ts, tz=timezone.utc)
     iso = scheduled_dt.isoformat()
+
+    # Pre-flight Meta window (10 min – 30 days) so Slack can restore the picker
+    # instead of a hard Meta error after a long-open picker.
+    now_ts = int(datetime.now(tz=timezone.utc).timestamp())
+    min_ts = now_ts + meta_publisher.MIN_SCHEDULE_OFFSET_SEC
+    max_ts = now_ts + meta_publisher.MAX_SCHEDULE_OFFSET_SEC
+    if selected_ts < min_ts or selected_ts > max_ts:
+        _handle_schedule_error(
+            channel, message_ts, original_blocks,
+            ":warning: Pick a time between 10 minutes and 30 days from now, "
+            "then Confirm again.",
+            item_id=item_id,
+        )
+        return
 
     # Show an intermediate "Scheduling..." state so the user sees feedback.
     try:
