@@ -141,12 +141,9 @@ async def handle_interaction(request: Request, background_tasks: BackgroundTasks
             item_id = int(value.rsplit("_", 1)[1])
         except (IndexError, ValueError):
             raise HTTPException(status_code=400, detail="Bad action value")
-        # Prefer Slack state.values; fall back to initial_date_time from the
-        # message blocks (Slack omits selected_date_time until the user
-        # interacts with the picker).
-        selected_ts = _extract_datetimepicker_value(
-            payload, item_id, message.get("blocks"),
-        )
+        # Prefer Slack state.values; if the picker was never touched, use a
+        # fresh now+1h default (see _extract_datetimepicker_value docstring).
+        selected_ts = _extract_datetimepicker_value(payload, item_id)
         if not selected_ts:
             background_tasks.add_task(
                 _handle_schedule_error, channel, message.get("ts"),
@@ -456,7 +453,7 @@ def _handle_approval(item_id, status, user_id, channel, message_ts,
         )
 
 
-def _extract_datetimepicker_value(payload, item_id, original_blocks=None):
+def _extract_datetimepicker_value(payload, item_id):
     """Read the selected unix timestamp from a datetimepicker.
 
     Prefer Slack state.values (set when the user interacts with the picker).
@@ -479,6 +476,44 @@ def _extract_datetimepicker_value(payload, item_id, original_blocks=None):
     # Fresh default if the picker was never touched.
     return int(_time.time()) + 3600
 
+
+def _handle_show_schedule_picker(item_id, channel, message_ts, original_blocks):
+    """Background task: swap the draft message in place to show the
+    datetimepicker + Confirm schedule button."""
+    picker_blocks = format_schedule_picker_blocks(item_id, original_blocks)
+    try:
+        update_message(channel, message_ts, blocks=picker_blocks)
+    except Exception as exc:
+        post_message(
+            channel,
+            text=f"(could not show schedule picker: {exc})",
+            thread_ts=message_ts,
+        )
+
+
+def _handle_schedule_error(channel, message_ts, original_blocks, status_text,
+                            item_id=None):
+    """Background task: show a schedule error, keeping Schedule recoverable.
+
+    Prefer re-showing the picker (with a context error line) so the user can
+    retry without hunting for the original Approve message.
+    """
+    if item_id is not None:
+        blocks = format_schedule_picker_blocks(item_id, original_blocks)
+        # Insert error context above the picker actions
+        blocks.insert(
+            -1,
+            {
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": status_text}],
+            },
+        )
+    else:
+        blocks = format_publish_result_blocks(original_blocks, status_text)
+    try:
+        update_message(channel, message_ts, blocks=blocks)
+    except Exception:
+        pass
 
 
 def _handle_queue_open(item_id, channel, thread_ts):
@@ -546,21 +581,26 @@ def _handle_publish_now(item_id, channel, message_ts, original_blocks):
             ),
         )
         return
-    if item["status"] != "approved":
-        update_message(
-            channel, message_ts,
-            blocks=format_publish_result_blocks(
-                original_blocks,
-                f":x: Cannot publish — item status is '{item['status']}'.",
-            ),
-        )
-        return
     if item["platform"] != "facebook":
         update_message(
             channel, message_ts,
             blocks=format_publish_result_blocks(
                 original_blocks,
                 ":x: V2 supports Facebook publishing only.",
+            ),
+        )
+        return
+
+    # Atomically claim the item (approved -> publishing) so a double-click or
+    # duplicate Slack retry cannot both proceed to call the Meta Graph API
+    # for the same item and create two live posts.
+    if not db.claim_item_status(item_id, "publishing", expected_status="approved"):
+        update_message(
+            channel, message_ts,
+            blocks=format_publish_result_blocks(
+                original_blocks,
+                f":x: Cannot publish — item status is '{item['status']}' "
+                "(already published, scheduled, or being published).",
             ),
         )
         return
@@ -581,6 +621,8 @@ def _handle_publish_now(item_id, channel, message_ts, original_blocks):
             item["draft_text"], image_url=item.get("image_url"),
         )
     except Exception as exc:
+        # Release the claim so the user can retry.
+        db.update_status(item_id, "approved")
         update_message(
             channel, message_ts,
             blocks=format_publish_result_blocks(
@@ -620,15 +662,6 @@ def _handle_publish_schedule(item_id, selected_ts, channel, message_ts,
             ),
         )
         return
-    if item["status"] != "approved":
-        update_message(
-            channel, message_ts,
-            blocks=format_publish_result_blocks(
-                original_blocks,
-                f":x: Cannot schedule — item status is '{item['status']}'.",
-            ),
-        )
-        return
     if item["platform"] != "facebook":
         update_message(
             channel, message_ts,
@@ -645,7 +678,8 @@ def _handle_publish_schedule(item_id, selected_ts, channel, message_ts,
     iso = scheduled_dt.isoformat()
 
     # Pre-flight Meta window (10 min – 30 days) so Slack can restore the picker
-    # instead of a hard Meta error after a long-open picker.
+    # instead of a hard Meta error after a long-open picker. Pure validation,
+    # no external calls yet, so no claim needed if this fails.
     now_ts = int(datetime.now(tz=timezone.utc).timestamp())
     min_ts = now_ts + meta_publisher.MIN_SCHEDULE_OFFSET_SEC
     max_ts = now_ts + meta_publisher.MAX_SCHEDULE_OFFSET_SEC
@@ -655,6 +689,20 @@ def _handle_publish_schedule(item_id, selected_ts, channel, message_ts,
             ":warning: Pick a time between 10 minutes and 30 days from now, "
             "then Confirm again.",
             item_id=item_id,
+        )
+        return
+
+    # Atomically claim the item (approved -> scheduling) so a double-click or
+    # duplicate Slack retry cannot both proceed to call the Meta Graph API
+    # for the same item and create two scheduled posts.
+    if not db.claim_item_status(item_id, "scheduling", expected_status="approved"):
+        update_message(
+            channel, message_ts,
+            blocks=format_publish_result_blocks(
+                original_blocks,
+                f":x: Cannot schedule — item status is '{item['status']}' "
+                "(already published, scheduled, or being scheduled).",
+            ),
         )
         return
 
@@ -673,7 +721,30 @@ def _handle_publish_schedule(item_id, selected_ts, channel, message_ts,
         meta_post_id = meta_publisher.schedule_page_post(
             item["draft_text"], iso, image_url=item.get("image_url"),
         )
+    except meta_publisher.ScheduleVerificationFailed as exc:
+        # Meta most likely DID create the scheduled post (this is a
+        # read-after-write verification failure, not necessarily a real
+        # failure). Persist the post id and mark it scheduled anyway so a
+        # retry cannot create a duplicate; surface the caveat in Slack.
+        db.update_status(
+            item_id, "scheduled",
+            meta_post_id=exc.post_id,
+            scheduled_for=iso,
+        )
+        update_message(
+            channel, message_ts,
+            blocks=format_publish_result_blocks(
+                original_blocks,
+                f":warning: Scheduled for {scheduled_dt.strftime('%Y-%m-%d %H:%M UTC')}, "
+                f"but could not confirm it's visible in Meta Planner yet. "
+                f"Meta post id: `{exc.post_id}`. Check the Planner manually; "
+                "do not schedule this item again.",
+            ),
+        )
+        return
     except Exception as exc:
+        # Release the claim so the user can retry.
+        db.update_status(item_id, "approved")
         update_message(
             channel, message_ts,
             blocks=format_publish_result_blocks(

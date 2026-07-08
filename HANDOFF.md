@@ -69,7 +69,7 @@ All Slack-signed endpoints verify HMAC-SHA256 with `SLACK_SIGNING_SECRET` and re
 **Connection:** `DATABASE_URL` is wired on the `nova` service as a reference variable `${{Postgres.DATABASE_URL}}`. Public psql access for manual ops:
 
 ```bash
-PGPASSWORD='SDKkDXQSUDdkVccpGoHEPTkfFHbeXsod' \
+PGPASSWORD='<see Railway dashboard — do not commit>' \
   psql -h reseau.proxy.rlwy.net -p 13297 -U postgres -d railway
 ```
 
@@ -92,7 +92,7 @@ PGPASSWORD='SDKkDXQSUDdkVccpGoHEPTkfFHbeXsod' \
 | `SLACK_SIGNING_SECRET` | for HMAC verification of events + interactions |
 | `SLACK_CONTENT_CHANNEL` | `C0BF8QKP0PL` (private channel named `nova-agent`) |
 | `DATABASE_URL` | reference var `${{Postgres.DATABASE_URL}}` — if it ever shows empty, re-set it (`railway variables set 'DATABASE_URL=${{Postgres.DATABASE_URL}}'`) |
-| `CRON_SECRET` | `massive-music-tech-issues` — required header for `/generate/start`, `/cron/generate`, `/onboard/start`, `/publish`, `/meta/verify` |
+| `CRON_SECRET` | `<see Railway dashboard — do not commit>` — required header for `/generate/start`, `/cron/generate`, `/onboard/start`, `/publish`, `/meta/verify` |
 | `META_PAGE_ID` | `120368170965` (BICCU Facebook page) — V2 |
 | `META_PAGE_ACCESS_TOKEN` | long-lived Page Access Token with `pages_manage_posts` scope — V2 |
 | `META_API_VERSION` | `v23.0` (optional) — V2 |
@@ -181,7 +181,7 @@ None of these require a code change to `core/` or `routes/`. Brands are plug-ins
 - From Slack: `/nova` → click the brand → **Onboard now** (works only after a seed folder exists, see Option B).
 - From the admin endpoint (works with or without a seed folder):
   ```bash
-  curl -X POST -H "X-Cron-Secret: massive-music-tech-issues" -H "Content-Type: application/json" \
+  curl -X POST -H "X-Cron-Secret: <see Railway dashboard — do not commit>" -H "Content-Type: application/json" \
     -d '{"brand_id":"acme","display_name":"Acme Co","channel":"C0BF8QKP0PL"}' \
     https://nova-production-14f6.up.railway.app/onboard/start
   ```
@@ -235,17 +235,17 @@ cd /Users/ghost/Desktop/ORG/agents/nova/content-loop
 railway link --project 47ab2c83-6fc9-42e7-9a12-92c98552c2ea --service nova --environment production
 
 # Run schema updates on Postgres
-PGPASSWORD='SDKkDXQSUDdkVccpGoHEPTkfFHbeXsod' psql -h reseau.proxy.rlwy.net -p 13297 -U postgres -d railway -f schema.sql
+PGPASSWORD='<see Railway dashboard — do not commit>' psql -h reseau.proxy.rlwy.net -p 13297 -U postgres -d railway -f schema.sql
 
 # Trigger the interactive generation flow (preferred manual path)
-curl -X POST -H "X-Cron-Secret: massive-music-tech-issues" \
+curl -X POST -H "X-Cron-Secret: <see Railway dashboard — do not commit>" \
   https://nova-production-14f6.up.railway.app/generate/start
 
 # Trigger the blanket cron loop (all due brands/platforms)
-curl -X POST -H "X-Cron-Secret: massive-music-tech-issues" https://nova-production-14f6.up.railway.app/cron/generate
+curl -X POST -H "X-Cron-Secret: <see Railway dashboard — do not commit>" https://nova-production-14f6.up.railway.app/cron/generate
 
 # Start an onboarding
-curl -X POST -H "X-Cron-Secret: massive-music-tech-issues" -H "Content-Type: application/json" \
+curl -X POST -H "X-Cron-Secret: <see Railway dashboard — do not commit>" -H "Content-Type: application/json" \
   -d '{"brand_id":"drewber","display_name":"Drewber Solutions","channel":"C0BF8QKP0PL"}' \
   https://nova-production-14f6.up.railway.app/onboard/start
 
@@ -254,15 +254,15 @@ railway deployment list
 railway logs
 
 # Check onboarding session state
-PGPASSWORD='SDKkDXQSUDdkVccpGoHEPTkfFHbeXsod' psql -h reseau.proxy.rlwy.net -p 13297 -U postgres -d railway \
+PGPASSWORD='<see Railway dashboard — do not commit>' psql -h reseau.proxy.rlwy.net -p 13297 -U postgres -d railway \
   -c "SELECT brand_id, phase, status FROM onboarding_sessions;"
 
 # Check DB-backed brands + platforms
-PGPASSWORD='SDKkDXQSUDdkVccpGoHEPTkfFHbeXsod' psql -h reseau.proxy.rlwy.net -p 13297 -U postgres -d railway \
+PGPASSWORD='<see Railway dashboard — do not commit>' psql -h reseau.proxy.rlwy.net -p 13297 -U postgres -d railway \
   -c "SELECT brand_id, config->>'display_name', config->'platforms' FROM brands;"
 
 # Check recent drafts + approval status
-PGPASSWORD='SDKkDXQSUDdkVccpGoHEPTkfFHbeXsod' psql -h reseau.proxy.rlwy.net -p 13297 -U postgres -d railway \
+PGPASSWORD='<see Railway dashboard — do not commit>' psql -h reseau.proxy.rlwy.net -p 13297 -U postgres -d railway \
   -c "SELECT id, brand, platform, status, approved_at FROM content_items ORDER BY id DESC LIMIT 10;"
 ```
 
@@ -372,7 +372,7 @@ The brand picker lands in `SLACK_CONTENT_CHANNEL` so the rest of the flow (platf
 
 After clicking **Approve** on a facebook draft, the message now shows two extra buttons:
 - **Publish now** → background task calls Meta Graph `POST /{page_id}/feed`, sets `status='posted'`, `posted_at`, `meta_post_id`. Message flips to ":rocket: Published to Facebook. Meta post id: `...`".
-- **Schedule** → swaps in a Slack `datetimepicker` + **Confirm schedule** button. On confirm, background task calls Meta with `published=false` + `scheduled_publish_time`, sets `status='scheduled'`, `scheduled_for`, `meta_post_id`. Meta publishes the post automatically at the requested time (10 min - 6 months out). No cron needed.
+- **Schedule** → swaps in a Slack `datetimepicker` + **Confirm schedule** button. On confirm, background task calls Meta with `published=false` + `scheduled_publish_time`, sets `status='scheduled'`, `scheduled_for`, `meta_post_id`. Meta publishes the post automatically at the requested time (10 min - 30 days out, enforced by `meta_publisher.MIN_SCHEDULE_OFFSET_SEC` / `MAX_SCHEDULE_OFFSET_SEC`). No cron needed.
 
 Non-facebook approved drafts keep the pre-V2 "ready for manual posting" line (no publish buttons). The publish endpoints/handlers refuse non-facebook items with a clear error.
 
@@ -429,7 +429,7 @@ The Pipeboard Meta Ads MCP connection is scoped to `ads_management` only — it 
    railway variables set 'META_PAGE_ACCESS_TOKEN=<paste>'
    railway variables | grep DATABASE_URL   # gotcha: env edits can wipe the reference var
    ```
-7. Verify: `curl -H "X-Cron-Secret: massive-music-tech-issues" https://nova-production-14f6.up.railway.app/meta/verify` should return `{"ok": true, "page_name": "Bahama Islands Co-operative Credit Union Limited"}`.
+7. Verify: `curl -H "X-Cron-Secret: <see Railway dashboard — do not commit>" https://nova-production-14f6.up.railway.app/meta/verify` should return `{"ok": true, "page_name": "Bahama Islands Co-operative Credit Union Limited"}`.
 
 ### Token lifecycle note (2026-07-05)
 

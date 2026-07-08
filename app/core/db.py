@@ -69,6 +69,35 @@ def update_status(
         conn.close()
 
 
+def claim_item_status(item_id, new_status, expected_status="approved"):
+    """Atomically transition item_id from expected_status to new_status.
+
+    Uses a single conditional UPDATE so two concurrent requests (e.g. a
+    double-click on "Publish now") cannot both proceed to call the Meta
+    Graph API for the same item. Returns True if this caller won the race
+    (the row existed with expected_status and was flipped), False if the
+    item was already in a different status (already claimed by another
+    request, already published/scheduled, or not approved).
+    """
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE content_items
+                   SET status = %s
+                 WHERE id = %s AND status = %s
+                RETURNING id
+                """,
+                (new_status, item_id, expected_status),
+            )
+            row = cur.fetchone()
+            conn.commit()
+            return row is not None
+    finally:
+        conn.close()
+
+
 def update_content_image(item_id, image_url, image_prompt=None, image_model=None):
     """Record a generated image against a content item.
 

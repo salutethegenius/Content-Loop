@@ -275,18 +275,35 @@ def handle_confirm(brand_id, platforms, channel, thread_ts):
         )
         return
 
-    summary = ", ".join(f"{r['platform']} (item #{r['item_id']})" for r in results)
+    succeeded = [r for r in results if "item_id" in r]
+    failed = [r for r in results if "error" in r]
+
+    summary = ", ".join(
+        f"{r['platform']} (item #{r['item_id']})" for r in succeeded
+    )
     extra = ""
     if skipped:
-        extra = f" Skipped (not configured): {', '.join(skipped)}."
-    post_message(
-        channel,
-        text=(
-            f"Done. Drafts for {brand['display_name']}: {summary}. "
-            f"They are in the approval channel for review.{extra}"
-        ),
-        thread_ts=thread_ts,
-    )
+        extra += f" Skipped (not configured): {', '.join(skipped)}."
+    if failed:
+        failed_summary = ", ".join(f"{r['platform']} ({r['error']})" for r in failed)
+        extra += f" Failed: {failed_summary}."
+
+    if succeeded:
+        post_message(
+            channel,
+            text=(
+                f"Done. Drafts for {brand['display_name']}: {summary}. "
+                f"They are in the approval channel for review.{extra}"
+            ),
+            thread_ts=thread_ts,
+        )
+    else:
+        post_message(
+            channel,
+            text=f"Generation failed for {brand['display_name']}.{extra}",
+            thread_ts=thread_ts,
+        )
+        return
     # Surface the actionable queue so the human can open / publish / schedule
     # without hunting through the channel.
     try:
