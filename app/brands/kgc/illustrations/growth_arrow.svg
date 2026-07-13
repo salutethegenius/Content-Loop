@@ -1,0 +1,22 @@
+<g>
+  <!-- Growth arrow for navy canvas. No white disc. -->
+  <circle cx="180" cy="180" r="150" fill="none" stroke="#C4A35A" stroke-width="1.5" opacity="0.35"/>
+
+  <rect x="100" y="220" width="36" height="50" rx="4" fill="#D8D2C4" opacity="0.55"/>
+  <rect x="150" y="180" width="36" height="90" rx="4" fill="#C4A35A"/>
+  <rect x="200" y="140" width="36" height="130" rx="4" fill="#D4BC7A"/>
+
+  <line x1="84" y1="276" x2="280" y2="276" stroke="#F7F4EC" stroke-width="2" opacity="0.5"/>
+
+  <path d="M108 220 L168 180 L218 140" stroke="#F7F4EC" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M218 140 L240 140 L240 162" stroke="#F7F4EC" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <circle cx="108" cy="220" r="5" fill="#C4A35A"/>
+  <circle cx="168" cy="180" r="5" fill="#C4A35A"/>
+
+  <g fill="#D4BC7A" opacity="0.55">
+    <circle cx="252" cy="120" r="3"/>
+    <circle cx="262" cy="108" r="3"/>
+    <circle cx="272" cy="96" r="3"/>
+  </g>
+</g>

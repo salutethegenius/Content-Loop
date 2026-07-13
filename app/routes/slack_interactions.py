@@ -565,6 +565,21 @@ def _handle_queue_refresh(channel, message_ts):
         )
 
 
+def _meta_credentials_for_item(item):
+    """Resolve (page_id, token) for an item's brand, or (None, error_msg)."""
+    from core import meta_publisher
+    from core.brand_loader import get_brand_by_id
+
+    brand_id = item.get("brand")
+    brand = get_brand_by_id(brand_id) if brand_id else None
+    if not brand:
+        return None, f"Unknown or inactive brand '{brand_id}' — cannot publish."
+    try:
+        return meta_publisher.resolve_for_brand(brand), None
+    except RuntimeError as exc:
+        return None, str(exc)
+
+
 def _handle_publish_now(item_id, channel, message_ts, original_blocks):
     """Background task: publish an approved facebook draft via the Meta Graph
     API, then flip the Slack message to a final status line."""
@@ -590,6 +605,17 @@ def _handle_publish_now(item_id, channel, message_ts, original_blocks):
             ),
         )
         return
+
+    creds, cred_err = _meta_credentials_for_item(item)
+    if cred_err:
+        update_message(
+            channel, message_ts,
+            blocks=format_publish_result_blocks(
+                original_blocks, f":x: {cred_err}"
+            ),
+        )
+        return
+    page_id, token = creds
 
     # Atomically claim the item (approved -> publishing) so a double-click or
     # duplicate Slack retry cannot both proceed to call the Meta Graph API
@@ -618,7 +644,9 @@ def _handle_publish_now(item_id, channel, message_ts, original_blocks):
 
     try:
         meta_post_id = meta_publisher.publish_page_post(
-            item["draft_text"], image_url=item.get("image_url"),
+            item["draft_text"],
+            page_id=page_id, token=token,
+            image_url=item.get("image_url"),
         )
     except Exception as exc:
         # Release the claim so the user can retry.
@@ -640,7 +668,8 @@ def _handle_publish_now(item_id, channel, message_ts, original_blocks):
         channel, message_ts,
         blocks=format_publish_result_blocks(
             original_blocks,
-            f":rocket: Published to Facebook. Meta post id: `{meta_post_id}`",
+            f":rocket: Published to Facebook (page `{page_id}`). "
+            f"Meta post id: `{meta_post_id}`",
         ),
     )
 
@@ -692,6 +721,17 @@ def _handle_publish_schedule(item_id, selected_ts, channel, message_ts,
         )
         return
 
+    creds, cred_err = _meta_credentials_for_item(item)
+    if cred_err:
+        update_message(
+            channel, message_ts,
+            blocks=format_publish_result_blocks(
+                original_blocks, f":x: {cred_err}"
+            ),
+        )
+        return
+    page_id, token = creds
+
     # Atomically claim the item (approved -> scheduling) so a double-click or
     # duplicate Slack retry cannot both proceed to call the Meta Graph API
     # for the same item and create two scheduled posts.
@@ -719,7 +759,9 @@ def _handle_publish_schedule(item_id, selected_ts, channel, message_ts,
 
     try:
         meta_post_id = meta_publisher.schedule_page_post(
-            item["draft_text"], iso, image_url=item.get("image_url"),
+            item["draft_text"], iso,
+            page_id=page_id, token=token,
+            image_url=item.get("image_url"),
         )
     except meta_publisher.ScheduleVerificationFailed as exc:
         # Meta most likely DID create the scheduled post (this is a

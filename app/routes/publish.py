@@ -2,10 +2,11 @@ import os
 import secrets
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from core import db, meta_publisher
+from core.brand_loader import get_brand_by_id
 
 router = APIRouter()
 
@@ -25,6 +26,21 @@ def _check_cron_secret(x_cron_secret: str | None):
         x_cron_secret, CRON_SECRET
     ):
         raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+def _credentials_for_item(item):
+    """Resolve Meta page_id + token from the item's brand. Raises HTTPException."""
+    brand_id = item.get("brand")
+    brand = get_brand_by_id(brand_id) if brand_id else None
+    if not brand:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown or inactive brand '{brand_id}' — cannot publish",
+        )
+    try:
+        return meta_publisher.resolve_for_brand(brand)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/publish")
@@ -52,6 +68,8 @@ def publish_item(
     if not item.get("draft_text"):
         raise HTTPException(status_code=400, detail="Item has no draft_text")
 
+    page_id, token = _credentials_for_item(item)
+
     # Atomically claim the item so a duplicate/retried request cannot call
     # the Meta Graph API twice for the same item.
     claim_status = "scheduling" if body.scheduled_for else "publishing"
@@ -65,6 +83,7 @@ def publish_item(
         try:
             meta_post_id = meta_publisher.schedule_page_post(
                 item["draft_text"], body.scheduled_for,
+                page_id=page_id, token=token,
                 image_url=item.get("image_url"),
             )
         except meta_publisher.ScheduleVerificationFailed as exc:
@@ -83,6 +102,7 @@ def publish_item(
                 "meta_post_id": exc.post_id,
                 "scheduled_for": body.scheduled_for,
                 "image_url": item.get("image_url"),
+                "page_id": page_id,
                 "warning": str(exc),
             }
         except Exception as exc:
@@ -100,11 +120,14 @@ def publish_item(
             "meta_post_id": meta_post_id,
             "scheduled_for": body.scheduled_for,
             "image_url": item.get("image_url"),
+            "page_id": page_id,
         }
 
     try:
         meta_post_id = meta_publisher.publish_page_post(
-            item["draft_text"], image_url=item.get("image_url"),
+            item["draft_text"],
+            page_id=page_id, token=token,
+            image_url=item.get("image_url"),
         )
     except Exception as exc:
         db.update_status(body.item_id, "approved")
@@ -120,17 +143,34 @@ def publish_item(
         "status": "posted",
         "meta_post_id": meta_post_id,
         "image_url": item.get("image_url"),
+        "page_id": page_id,
     }
 
 
 @router.get("/meta/verify")
-def verify_meta_token(x_cron_secret: str | None = Header(default=None)):
-    """Sanity check the META_PAGE_ACCESS_TOKEN works against META_PAGE_ID.
+def verify_meta_token(
+    x_cron_secret: str | None = Header(default=None),
+    brand_id: str = Query(default="biccu"),
+):
+    """Sanity check the brand's Page Access Token against its meta_page_id.
     Returns the page name on success. Cron-secret gated so it's not a public
-    token oracle."""
+    token oracle. Pass ?brand_id=kgc to verify a non-default brand."""
     _check_cron_secret(x_cron_secret)
+    brand = get_brand_by_id(brand_id)
+    if not brand:
+        raise HTTPException(
+            status_code=404, detail=f"Unknown or inactive brand '{brand_id}'"
+        )
     try:
-        name = meta_publisher.verify_token()
+        page_id, token = meta_publisher.resolve_for_brand(brand)
+        name = meta_publisher.verify_token(page_id=page_id, token=token)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Meta verify failed: {exc}")
-    return {"ok": True, "page_name": name}
+    return {
+        "ok": True,
+        "brand_id": brand_id,
+        "page_id": page_id,
+        "page_name": name,
+    }

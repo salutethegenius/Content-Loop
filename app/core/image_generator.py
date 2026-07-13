@@ -37,12 +37,36 @@ IMAGE_BASE_URL = os.environ.get("IMAGE_BASE_URL", "").rstrip("/")
 
 CANVAS_SIZE = 1080
 
-# Brand palette constants (BICCU). Used to color-code headline emphasis lines
-# without Claude having to pick exact hex codes every time.
+# Default palette (BICCU). Per-brand overrides come from
+# brand_config.visual_identity.colors when present.
 PRIMARY_BLUE = "#0079C8"
 DARK_NAVY = "#003C71"
 LIGHT_BLUE = "#47B8E8"
 ACCENT_ORANGE = "#F47A20"
+
+
+def _headline_palette(brand_config=None):
+    """Return (emphasis_hex, base_hex) for headline line colors.
+
+    Reads visual_identity.colors when set:
+      primary / accent / gold  -> emphasis
+      navy / dark / secondary  -> base
+    Falls back to BICCU Primary Blue / Dark Navy.
+    """
+    colors = ((brand_config or {}).get("visual_identity") or {}).get("colors") or {}
+    if not isinstance(colors, dict):
+        colors = {}
+
+    def _pick(*keys, default):
+        for key in keys:
+            val = colors.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+        return default
+
+    emphasis = _pick("primary", "accent", "gold", "emphasis", default=PRIMARY_BLUE)
+    base = _pick("navy", "dark", "secondary", "base", default=DARK_NAVY)
+    return emphasis, base
 
 
 def build_slot_prompt(brand_config, platform, draft_text, available_illustrations):
@@ -252,7 +276,8 @@ def _fit_headline(headline_lines, max_width=560, max_font=100, min_font=48):
     return font_size, line_height, start_y
 
 
-def compose_svg(template_str, slots, illustration_svg, footer_data):
+def compose_svg(template_str, slots, illustration_svg, footer_data,
+                brand_config=None):
     """Inject slots + illustration + footer data into the template, returning
     the final SVG string ready to rasterize.
 
@@ -272,8 +297,9 @@ def compose_svg(template_str, slots, illustration_svg, footer_data):
     native wrap.
     """
     s = _normalize_slots(slots)
+    emphasis_hex, base_hex = _headline_palette(brand_config)
     headline_colors = [
-        PRIMARY_BLUE if emp else DARK_NAVY for emp in s["headline_emphasis"]
+        emphasis_hex if emp else base_hex for emp in s["headline_emphasis"]
     ]
 
     font_size, line_height, start_y = _fit_headline(s["headline_lines"])
@@ -416,7 +442,10 @@ def generate_and_save(brand_config, platform, draft_text, item_id, model=None):
         illustration_svg = ""
 
     footer_data = design_loader.get_footer_data(brand_config)
-    final_svg = compose_svg(template_str, slots, illustration_svg, footer_data)
+    final_svg = compose_svg(
+        template_str, slots, illustration_svg, footer_data,
+        brand_config=brand_config,
+    )
     png_bytes = rasterize_svg(final_svg)
     url = save_image(png_bytes, brand_id, item_id)
     return url, prompt, model_used

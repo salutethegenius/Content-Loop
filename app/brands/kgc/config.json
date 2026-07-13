@@ -4,5 +4,33 @@
   "active": true,
   "platforms": ["facebook", "instagram"],
   "posting_cadence_days": 3,
-  "image_style_prompt": "sovereign navy and gold, institutional, clean"
+  "image_style_prompt": "sovereign navy and gold, institutional, clean",
+  "meta_page_id": "982982491571698",
+  "meta_token_env": "META_KGC_PAGE_ACCESS_TOKEN",
+  "footer": {
+    "website": "kemisgroup.com",
+    "phone": "hello@thekemisgroup.com",
+    "tagline": "Sovereign Digital Infrastructure",
+    "hashtag": "#KemisGroup",
+    "social": {
+      "facebook": "",
+      "instagram": "",
+      "linkedin": ""
+    }
+  },
+  "visual_identity": {
+    "wordmark_text": "KGC",
+    "colors": {
+      "navy": "#F7F4EC",
+      "base": "#F7F4EC",
+      "primary": "#C4A35A",
+      "gold": "#C4A35A",
+      "accent": "#C4A35A"
+    }
+  },
+  "design": {
+    "template": "template.svg",
+    "illustrations_dir": "illustrations",
+    "default_illustration": "growth_arrow"
+  }
 }

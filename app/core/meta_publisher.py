@@ -1,9 +1,9 @@
 """Meta Graph API client for publishing posts to a Facebook Page.
 
-V2 of the content loop. Direct Graph API calls (no MCP plugin). Kenneth
-provides a long-lived Page Access Token with `pages_manage_posts` scope via
-the META_PAGE_ACCESS_TOKEN env var; META_PAGE_ID is the BICCU page
-(120368170965 = "Bahama Islands Co-operative Credit Union Limited").
+Direct Graph API calls (no MCP plugin). Each brand stores `meta_page_id` and
+`meta_token_env` in its config; resolve_for_brand() loads the matching Page
+Access Token from the environment. Legacy callers may still pass page_id /
+token explicitly, falling back to META_PAGE_ID / META_PAGE_ACCESS_TOKEN.
 
 Scheduled posts are handled natively by Meta: pass `published=false` plus a
 `scheduled_publish_time` (unix seconds, 10 min - 30 days out) and Meta
@@ -39,6 +39,7 @@ class ScheduleVerificationFailed(RuntimeError):
 
 GRAPH_BASE = "https://graph.facebook.com"
 API_VERSION = os.environ.get("META_API_VERSION", "v23.0")
+DEFAULT_TOKEN_ENV = "META_PAGE_ACCESS_TOKEN"
 
 # Meta Pages API: scheduled_publish_time must be 10 minutes – 30 days out.
 MIN_SCHEDULE_OFFSET_SEC = 10 * 60
@@ -52,9 +53,41 @@ def _page_endpoint(page_id, edge=""):
     return f"{GRAPH_BASE}/{API_VERSION}/{page_id}"
 
 
+def resolve_for_brand(brand_config):
+    """Return (page_id, token) for a brand config.
+
+    Requires brand_config['meta_page_id']. Token is loaded from the env var
+    named by brand_config['meta_token_env'] (default META_PAGE_ACCESS_TOKEN).
+
+    Raises RuntimeError if the brand has no page mapping or the token env is
+    unset — never silently falls back to another brand's page.
+    """
+    if not brand_config:
+        raise RuntimeError("No brand config provided for Meta publish")
+
+    brand_id = brand_config.get("brand_id") or "?"
+    page_id = (brand_config.get("meta_page_id") or "").strip()
+    if not page_id:
+        raise RuntimeError(
+            f"Brand '{brand_id}' has no meta_page_id — refusing to publish "
+            "to a default page. Set meta_page_id on the brand config."
+        )
+
+    token_env = (
+        (brand_config.get("meta_token_env") or "").strip() or DEFAULT_TOKEN_ENV
+    )
+    token = os.environ.get(token_env) or ""
+    if not token:
+        raise RuntimeError(
+            f"Brand '{brand_id}' token env '{token_env}' is not set"
+        )
+    return page_id, token
+
+
 def _resolve(page_id, token):
+    """Legacy resolve for explicit page_id/token args (env fallback)."""
     return page_id or os.environ.get("META_PAGE_ID"), token or os.environ.get(
-        "META_PAGE_ACCESS_TOKEN"
+        DEFAULT_TOKEN_ENV
     )
 
 

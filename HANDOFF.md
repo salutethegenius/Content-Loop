@@ -208,7 +208,7 @@ None of these require a code change to `core/` or `routes/`. Brands are plug-ins
 ### 8.2 What you cannot do today (deferred)
 
 - **Add a brand purely from Slack with no seed folder and no curl.** The `/nova` picker only lists brands that already exist in the DB or on disk — there is no "create new brand" button. A future `/nova onboard <brand_id> <display_name>` subcommand (or a button on the picker that opens a "what's the brand id + display name?" dialog) calling `onboarding.start_session` would close this gap. ~20 lines on top of 1.5.0.
-- **Per-brand Facebook page.** `META_PAGE_ID` is a single env var (BICCU's page). To publish for a second brand's Facebook page, store `meta_page_id` in each brand's config and pass it through `meta_publisher` (already flagged in section 12).
+- ~~**Per-brand Facebook page.**~~ **DONE** — each brand config carries `meta_page_id` + `meta_token_env`. Publish/schedule resolve via `meta_publisher.resolve_for_brand`. See section 18.
 
 ---
 
@@ -315,7 +315,7 @@ Kenneth's ask: Nova should ask who to generate for and which platforms, instead 
 - **Image generation** — `generator.generate_image` is a stub returning `None`. Wire via Auto mode across Grok, Gemini, ChatGPT when ready. **Next session.**
 - Instagram publishing — 2-step Graph flow (`POST /{ig-user-id}/media` then `POST /{ig-user-id}/media_publish`). Needs the IG business account id linked to the BICCU page. Deferred from V2.
 - LinkedIn publishing — deferred from V2.
-- Per-brand `meta_page_id` — currently a single `META_PAGE_ID` env var (BICCU only). To support multiple brands' Facebook pages, store `meta_page_id` in each brand's `config.json` / `brands` table row and pass it through `meta_publisher`.
+- ~~Per-brand `meta_page_id`~~ — **DONE** (section 18). Instagram / LinkedIn still deferred.
 
 ---
 
@@ -406,36 +406,70 @@ app/main.py                             publish_router + slack_commands_router r
 
 ### Brand plug-in rule still holds
 
-Nothing in `app/core/meta_publisher.py` hardcodes BICCU. The page id comes from `META_PAGE_ID`. To support a second brand's Facebook page later, store the page id in the brand's `config.json` (DB `brands` table) under e.g. `meta_page_id` and pass it through. The current single-env-var approach is a V2 shortcut for the one live brand.
+Publish resolves page credentials from the item's brand via `meta_publisher.resolve_for_brand(brand_config)`. Each brand config must set `meta_page_id` and optionally `meta_token_env` (default `META_PAGE_ACCESS_TOKEN`). Missing `meta_page_id` fails closed — never posts to another brand's page.
 
 ---
 
-## 15. Generating the META_PAGE_ACCESS_TOKEN (one-time setup)
+## 15. Generating a Page Access Token (one-time setup per Facebook Page)
 
-The Pipeboard Meta Ads MCP connection is scoped to `ads_management` only — it cannot create organic page posts. For V2 publishing we use a long-lived **Page Access Token** generated directly via the Graph API Explorer.
+Organic posting uses a long-lived **Page Access Token** from the Graph API Explorer (Nova-Agent app). Direct Graph calls only — no ads tooling.
 
-1. Open https://developers.facebook.com/tools/explorer/ and pick your app.
+1. Open https://developers.facebook.com/tools/explorer/ and pick the **Nova-Agent** app (`27311849091810327`).
 2. **User or Page** dropdown → **User Token** → click **Generate Access Token**.
-3. Check scopes: `pages_show_list`, `pages_manage_posts`, `pages_read_engagement`. Authorize, picking the **Bahama Islands Co-operative Credit Union Limited** page.
+3. Check scopes: `pages_show_list`, `pages_manage_posts`, `pages_read_engagement`. Authorize, picking the target Facebook Page.
 4. Exchange the short-lived user token for a long-lived one:
    ```
    GET /oauth/access_token?grant_type=fb_exchange_token
        &client_id={APP_ID}&client_secret={APP_SECRET}
        &fb_exchange_token={SHORT_USER_TOKEN}
    ```
-5. Switch the **User or Page** dropdown to **Page Token** and select the BICCU page. The token shown is the long-lived Page Access Token (effectively permanent — does not expire unless the app is removed or the page unlinks).
-6. Set on Railway:
-   ```bash
-   railway variables set 'META_PAGE_ACCESS_TOKEN=<paste>'
-   railway variables | grep DATABASE_URL   # gotcha: env edits can wipe the reference var
-   ```
-7. Verify: `curl -H "X-Cron-Secret: <see Railway dashboard — do not commit>" https://nova-production-14f6.up.railway.app/meta/verify` should return `{"ok": true, "page_name": "Bahama Islands Co-operative Credit Union Limited"}`.
+5. Switch the **User or Page** dropdown to **Page Token** and select the target page. The token shown is the long-lived Page Access Token (effectively permanent — does not expire unless the app is removed or the page unlinks).
+6. Note the page id (from Graph `me/accounts` or the Explorer page selector) and set Railway vars (see below).
+7. Verify with `/meta/verify?brand_id=...`.
+
+### BICCU (already live)
+
+```bash
+railway variables set 'META_PAGE_ACCESS_TOKEN=<paste>'
+railway variables | grep DATABASE_URL   # gotcha: env edits can wipe the reference var
+curl -H "X-Cron-Secret: <see Railway dashboard — do not commit>" \
+  "https://nova-production-14f6.up.railway.app/meta/verify?brand_id=biccu"
+# -> {"ok": true, "brand_id": "biccu", "page_id": "120368170965",
+#     "page_name": "Bahama Islands Co-operative Credit Union Limited"}
+```
+
+Seed/config: `meta_page_id: "120368170965"`, `meta_token_env: "META_PAGE_ACCESS_TOKEN"`.
 
 ### Token lifecycle note (2026-07-05)
 
 The `META_PAGE_ACCESS_TOKEN` on Railway is **long-lived (never expires, `expires_at: 0`)** — generated via the `fb_exchange_token` flow + page-token re-fetch. App used is "Nova-Agent" (app id `27311849091810327`), token type PAGE, scopes `pages_show_list` + `pages_read_engagement` + `pages_manage_posts`. It only stops working if the app is removed from the page or the page unlinks the app.
 
-To regenerate from scratch (e.g. for a second brand's page): see the steps in section 15.
+### KGC / The Kemis Group (second page — ops checklist)
+
+Repeat section 15 steps 1–5 selecting **The Kemis Group** page (exact Facebook page name may vary). Then:
+
+1. Put the page id into `app/brands/kgc/config.json` → `meta_page_id`, and patch the live DB row:
+   ```sql
+   UPDATE brands
+   SET config = jsonb_set(
+     jsonb_set(config, '{meta_page_id}', '"YOUR_KGC_PAGE_ID"'),
+     '{meta_token_env}', '"META_KGC_PAGE_ACCESS_TOKEN"'
+   )
+   WHERE brand_id = 'kgc';
+   ```
+2. Railway:
+   ```bash
+   railway variables set 'META_KGC_PAGE_ACCESS_TOKEN=<kgc page token>'
+   railway variables | grep DATABASE_URL
+   ```
+3. Verify:
+   ```bash
+   curl -H "X-Cron-Secret: <see Railway dashboard>" \
+     "https://nova-production-14f6.up.railway.app/meta/verify?brand_id=kgc"
+   # expect page_name for The Kemis Group
+   ```
+
+Until `meta_page_id` + `META_KGC_PAGE_ACCESS_TOKEN` are set, KGC Publish/Schedule fails with a clear error (does **not** fall back to BICCU).
 
 ---
 
@@ -600,7 +634,7 @@ Per Generate image click: one Claude Sonnet call, ~500-1000 tokens output. ~$0.0
 ### Out of scope for V1.7
 
 - ~~Real BICCU logo SVG~~ — DONE in V1.7. The real BICCU logo (globe + family + hands emblem) is base64-embedded in `template.svg`'s logo zone as a 240x240 optimized PNG rendered at 190x190. The source PNG is versioned at `app/brands/biccu/logo.png`. To update the logo: replace `logo.png`, re-encode to base64, and swap the data URI in `template.svg`.
-- Per-brand templates for Drewber/KGC (architecture supports it; only BICCU ships in V1.7).
+- ~~Per-brand templates for Drewber/KGC~~ — KGC ships in section 18; Drewber still pending.
 - Reference-image-as-prompt (the template IS the reference now).
 - Auto-wrapping for the supporting paragraph (Claude is instructed to keep it to 1-2 sentences that fit the foreignObject zone; if it overflows, the foreignObject clips).
 
@@ -619,3 +653,41 @@ The first live render exposed three bugs, all fixed:
 
 The logo zone also switched from the full square logo PNG (which had baked-in text rendering too small) to the emblem-only crop + live SVG text for "BICCU / BAHAMA ISLANDS CO-OPERATIVE / CREDIT UNION LIMITED" — crisp at any size.
 
+
+---
+
+## 18. Per-brand Meta routing + KGC design system (2026-07-13)
+
+### Per-brand Facebook page routing
+
+Publish/schedule no longer use a single global page for every brand.
+
+- Brand config fields: `meta_page_id` (required), `meta_token_env` (default `META_PAGE_ACCESS_TOKEN`).
+- `meta_publisher.resolve_for_brand(brand_config)` → `(page_id, token)`.
+- Slack publish handlers + `POST /publish` load the item's brand and pass `page_id=` / `token=`.
+- `GET /meta/verify?brand_id=biccu|kgc` verifies the mapped page.
+- Missing `meta_page_id` fails closed (never posts KGC copy to BICCU).
+- Filesystem seed fills missing `meta_*` / `design` / `visual_identity.colors` onto DB brands via `brand_loader._merge_seed_fill`.
+
+| Brand | `meta_page_id` | Token env |
+| --- | --- | --- |
+| `biccu` | `120368170965` | `META_PAGE_ACCESS_TOKEN` |
+| `kgc` | *(set via Graph Explorer — see §15 KGC checklist)* | `META_KGC_PAGE_ACCESS_TOKEN` |
+
+### KGC design system
+
+```
+app/brands/kgc/logo.png              uploaded KGC app-icon logo
+app/brands/kgc/template.svg          navy/gold 1080x1080, logo embedded
+app/brands/kgc/illustrations/*.svg   growth_arrow, shield, house, coins (recolored)
+app/brands/kgc/config.json           design + visual_identity.colors + meta_*
+```
+
+Headline emphasis colors read `visual_identity.colors` (`primary`/`gold` vs `navy`) in `image_generator._headline_palette`.
+
+### Ops still required before KGC Publish works
+
+1. Graph Explorer → Nova-Agent → Page Token for **The Kemis Group**.
+2. Set `meta_page_id` in seed + DB; set `META_KGC_PAGE_ACCESS_TOKEN` on Railway.
+3. Redeploy so `kgc/template.svg` is on the service.
+4. Slack: Generate image on a KGC draft → Publish now → confirm post on The Kemis Group page.
