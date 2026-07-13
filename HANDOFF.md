@@ -323,7 +323,7 @@ Kenneth's ask: Nova should ask who to generate for and which platforms, instead 
 
 - The `content_items` table has no `pillar` column — currently you cannot tell which pillar a draft was anchored to. Consider adding `pillar TEXT` to `content_items` and having `save_draft` record it, for analytics/content planning.
 - `onboarding_sessions.answers` accumulates raw message text per phase; if a human posts many messages, the synthesis prompt grows. Fine for now (6 phases, modest volume), but worth a length guard eventually.
-- No per-session lock — two rapid replies in the same onboarding thread could race. Low risk at current volume.
+- No per-session lock — two rapid replies in the same onboarding thread could race. Low risk at current volume. (Reliability pass 2026-07-13 fixed the bigger onboarding bug — see §19 revision loop.)
 - `append_onboarding_answer` uses `answers || jsonb_build_object(...)` which is safe but worth noting if answers ever get nested.
 - Onboarding Phase 6 still asks cadence "per platform" in prose but config stores a single `posting_cadence_days` — fine for V1, may need per-platform cadence later.
 - Drafts approved before `8e87f12` may still show stale Approve/Reject buttons in Slack even though the DB status is correct. Re-approve not needed; generate new drafts to see the updated UX.
@@ -685,9 +685,88 @@ app/brands/kgc/config.json           design + visual_identity.colors + meta_*
 
 Headline emphasis colors read `visual_identity.colors` (`primary`/`gold` vs `navy`) in `image_generator._headline_palette`.
 
-### Ops still required before KGC Publish works
+### Ops still required before KGC Publish works — DONE 2026-07-13
 
-1. Graph Explorer → Nova-Agent → Page Token for **The Kemis Group**.
-2. Set `meta_page_id` in seed + DB; set `META_KGC_PAGE_ACCESS_TOKEN` on Railway.
-3. Redeploy so `kgc/template.svg` is on the service.
-4. Slack: Generate image on a KGC draft → Publish now → confirm post on The Kemis Group page.
+All four steps completed and verified live: `meta_page_id` `982982491571698`,
+`META_KGC_PAGE_ACCESS_TOKEN` on Railway, template deployed, publish verified
+on The Kemis Group page. KGC footer data (kemisgroup.com / hello@thekemisgroup.com /
+"Sovereign Digital Infrastructure" / #KemisGroup) set in DB + seed.
+
+---
+
+## 19. Reliability hardening pass (2026-07-13, post-audit)
+
+Three parallel code audits (core pipeline, Slack surface, publish/image stack)
+produced a prioritized bug list; all P0/P1 items were fixed in four batches.
+
+### Content item lifecycle (new semantics)
+
+```
+pending_approval -> approved | rejected      (atomic claim, no resurrections)
+approved         -> publishing -> posted     (claim stamps claimed_at)
+approved         -> scheduling -> scheduled  (claim stamps claimed_at)
+```
+
+- **Approve/Reject is atomic** (`claim_item_status` from `pending_approval`).
+  Double-clicks/two users converge on the first resolution; a stale click
+  re-renders the actual state instead of flipping it.
+- **Delete is status-gated** (`db.DELETABLE_STATUSES` = pending_approval,
+  approved, rejected, scheduled). Items in `publishing`/`scheduling` or
+  `posted` are refused — a stale Delete button (e.g. on a queue-open copy)
+  can never orphan a live Facebook post. Scheduled items cancel the Meta
+  post first; the DB row is only removed after Meta confirms.
+- **Stuck-claim recovery**: `claim_item_status` stamps `claimed_at`
+  (schema: `content_items.claimed_at TIMESTAMP`). Every `/cron/generate`
+  run sweeps items stuck in `publishing`/`scheduling` >15 min back to
+  `approved` and posts a Slack alert. **Operator must check the Facebook
+  page before re-publishing a recovered item** — the Meta call may have
+  succeeded right before the crash.
+- **Final Slack updates are failure-tolerant**: after a successful Meta
+  publish/schedule, if `chat.update` fails the outcome is posted as a
+  threaded reply instead of wedging the message on "Publishing...".
+
+### Cron discipline
+
+- Cadence baseline is now `db.get_last_activity` (newest non-rejected
+  draft's `created_at`), not `posted_at` — schedule-only brands are no
+  longer "always due".
+- Brands with a `pending_approval` backlog are skipped until the queue is
+  cleared (result rows show `skipped: pending_approval backlog`).
+- `run_content_loop` holds a Postgres advisory lock (`LOOP_LOCK_KEY`), so
+  overlapping cron fires no-op with `skipped: content loop already running`.
+
+### Onboarding revision loop (was broken)
+
+After **Reject** on a brand draft, thread replies are now captured (events
+gate accepts status `rejected`) and stored under `answers.revision_feedback`;
+Nova confirms receipt in-thread. **Regenerate** feeds that feedback into
+`synthesize_brand` with override priority. Previously replies were silently
+dropped and Regenerate reproduced the identical draft.
+
+### Quick-sweep hardening
+
+- `illustration_id` from Claude lowercased before library lookup (was
+  silently falling back to the default illustration on case mismatch).
+- `save_image` sanitizes `brand_id`/`item_id` path components.
+- `meta_publisher.delete_post` tolerates empty/non-JSON bodies + checks HTTP
+  status; `_parse_schedule_unix` accepts `Z`-suffixed ISO and documents the
+  naive-means-UTC contract; `verify_scheduled_post` follows pagination (3 pages).
+- `main.py` logs FATAL CONFIG at boot for missing required env vars and
+  reports them on `GET /` (`status: degraded`) instead of KeyErrors deep in
+  background tasks.
+- Queue-open drafts truncate to 2,900 chars (Slack 3,000-char block limit).
+
+### Known gaps deliberately deferred
+
+- Queue caps at 20 items, no pagination.
+- Slack signature verification logic exists in three places (interactions,
+  events inline; commands via `slack_verify`) — identical today, dedupe later.
+- Onboarding sessions never expire; replies to dead threads are silently ignored.
+- `update_status` COALESCE semantics mean `scheduled_for` can never be
+  cleared once set (stale value visible on re-approved items).
+- Seed `visual_identity.colors` refresh DB colors on load by design (deploy
+  updates win); revisit if onboarding should own colors instead.
+- `/publish` REST auth is a single shared `X-Cron-Secret` (full publish
+  capability if leaked).
+- No idempotency on Slack Events retries (`event_id` dedupe) — duplicate
+  onboarding answers possible on retry.

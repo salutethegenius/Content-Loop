@@ -81,8 +81,10 @@ async def slack_events(request: Request, background_tasks: BackgroundTasks):
     if not thread_ts:
         return {"ok": True}
 
+    # `rejected` is accepted too: after a draft is rejected the operator
+    # replies with corrections in the same thread, then clicks Regenerate.
     session = db.get_onboarding_session_by_thread(thread_ts)
-    if not session or session.get("status") != "in_progress":
+    if not session or session.get("status") not in ("in_progress", "rejected"):
         return {"ok": True}
 
     # Acknowledge now, process in the background to stay under Slack's 3s limit.
@@ -97,8 +99,17 @@ def _process_onboarding_reply(session, text, channel, thread_ts):
     brand_id = session["brand_id"]
     phase = session["phase"]
 
-    # Terminal/awaiting state: ignore further replies until the draft is acted on.
+    # After the draft is on the table, replies only matter as revision
+    # feedback on a rejected draft; store them where Regenerate will find
+    # them and confirm receipt so the operator knows it registered.
     if phase in ("awaiting_approval", "done"):
+        if session.get("status") == "rejected":
+            db.append_onboarding_answer(brand_id, "revision_feedback", text)
+            post_message(
+                channel,
+                text="Noted. Add more if you like, then click *Regenerate* on the draft.",
+                thread_ts=thread_ts,
+            )
         return
 
     if onboarding.is_next_command(text):

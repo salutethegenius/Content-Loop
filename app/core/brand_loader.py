@@ -152,8 +152,10 @@ def load_voice(brand_id):
 def is_due_for_post(brand_config, last_posted_at):
     """True when a brand should generate a new draft.
 
-    A brand with no post history yet is always due, so the first draft is not
-    silently skipped forever.
+    `last_posted_at` is the cadence baseline — the caller passes the newest
+    non-rejected draft's created_at (db.get_last_activity), so schedule-only
+    brands with no `posted` rows still respect their cadence. A brand with no
+    history at all is always due, so the first draft is not skipped forever.
     """
     if last_posted_at is None:
         return True

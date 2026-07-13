@@ -60,3 +60,7 @@ ALTER TABLE content_items ADD COLUMN IF NOT EXISTS published_via TEXT DEFAULT 'm
 ALTER TABLE content_items ADD COLUMN IF NOT EXISTS image_prompt TEXT;
 ALTER TABLE content_items ADD COLUMN IF NOT EXISTS image_model TEXT;
 ALTER TABLE content_items ADD COLUMN IF NOT EXISTS image_generated_at TIMESTAMPTZ;
+
+-- V2.1: Stuck-claim recovery. claim_item_status stamps claimed_at when an
+-- item enters publishing/scheduling; the cron sweep reverts stale claims.
+ALTER TABLE content_items ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMP;

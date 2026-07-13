@@ -109,8 +109,15 @@ def _extract_post_id(data, label):
 
 
 def _parse_schedule_unix(scheduled_for_iso):
-    """Convert ISO datetime to unix seconds and validate Meta's window."""
-    dt = datetime.fromisoformat(scheduled_for_iso)
+    """Convert ISO datetime to unix seconds and validate Meta's window.
+
+    Naive datetimes are treated as UTC (documented REST contract). A trailing
+    'Z' is normalized for Python versions whose fromisoformat rejects it.
+    """
+    iso = str(scheduled_for_iso).strip()
+    if iso.endswith("Z"):
+        iso = iso[:-1] + "+00:00"
+    dt = datetime.fromisoformat(iso)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     unix = int(dt.astimezone(timezone.utc).timestamp())
@@ -269,15 +276,20 @@ def verify_scheduled_post(post_id, page_id=None, token=None):
     if data.get("scheduled_publish_time"):
         return data
 
-    # Fallback: scan scheduled_posts edge for this id
-    edge = requests.get(
-        _page_endpoint(page_id, "scheduled_posts"),
-        params={"fields": "id,scheduled_publish_time", "access_token": token},
-        timeout=15,
-    )
-    edge_data = edge.json()
-    _raise_if_error(edge_data, "Meta scheduled_posts list failed")
-    ids = {row.get("id") for row in (edge_data.get("data") or [])}
+    # Fallback: scan the scheduled_posts edge for this id, following
+    # pagination (busy pages can push a fresh post past the first page).
+    ids = set()
+    url = _page_endpoint(page_id, "scheduled_posts")
+    params = {"fields": "id,scheduled_publish_time", "access_token": token}
+    for _page in range(3):
+        edge = requests.get(url, params=params, timeout=15)
+        edge_data = edge.json()
+        _raise_if_error(edge_data, "Meta scheduled_posts list failed")
+        ids |= {row.get("id") for row in (edge_data.get("data") or [])}
+        next_url = ((edge_data.get("paging") or {}).get("next"))
+        if not next_url:
+            break
+        url, params = next_url, None  # next URL embeds the query string
     # Meta sometimes returns bare post id vs pageId_postId
     bare = str(post_id).split("_")[-1]
     if post_id in ids or bare in ids or any(
@@ -295,6 +307,8 @@ def delete_post(post_id, page_id=None, token=None):
 
     Used by the Slack Delete button to cancel a Meta-scheduled post before
     removing the item from the queue. Raises RuntimeError on API errors.
+    Tolerates empty/non-JSON bodies: a 2xx with no parseable body is treated
+    as success, anything else surfaces the raw response.
     """
     page_id, token = _resolve(page_id, token)
     if not token:
@@ -304,9 +318,21 @@ def delete_post(post_id, page_id=None, token=None):
         params={"access_token": token},
         timeout=15,
     )
-    data = resp.json()
+    try:
+        data = resp.json()
+    except ValueError:
+        if resp.ok:
+            return {"success": True}
+        raise RuntimeError(
+            f"Meta post delete failed (HTTP {resp.status_code}): "
+            f"{resp.text[:200]}"
+        )
     _raise_if_error(data, "Meta post delete failed")
-    if not data.get("success", True):
+    if not resp.ok:
+        raise RuntimeError(
+            f"Meta post delete failed (HTTP {resp.status_code}): {data}"
+        )
+    if data.get("success") is False:
         raise RuntimeError(f"Meta post delete returned {data}")
     return data
 

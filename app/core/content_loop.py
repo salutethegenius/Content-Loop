@@ -4,9 +4,18 @@ import sys
 import traceback
 
 from core.brand_loader import get_active_brands, is_due_for_post
-from core.db import get_last_posted, save_draft, update_status
+from core.db import (
+    get_conn,
+    get_last_activity,
+    has_pending_backlog,
+    save_draft,
+    update_status,
+)
 from core.generator import generate_draft
 from core.slack_client import post_for_approval
+
+# Arbitrary constant identifying the content-loop advisory lock in Postgres.
+LOOP_LOCK_KEY = 913522041
 
 
 def generate_for_platforms(brand, platforms):
@@ -59,21 +68,50 @@ def run_content_loop():
     Each brand is isolated: a failure loading/checking one brand (bad config,
     DB hiccup) is recorded as an error entry and does not prevent the
     remaining brands from being processed in the same run.
+
+    Guards:
+    - Postgres advisory lock so overlapping cron fires (double trigger,
+      manual + scheduled) can't generate duplicates concurrently.
+    - Cadence is based on the newest non-rejected draft's created_at
+      (get_last_activity), so schedule-only brands aren't "always due".
+    - Brands with a pending_approval backlog are skipped until the human
+      clears the queue.
     """
+    lock_conn = get_conn()
+    try:
+        with lock_conn.cursor() as cur:
+            cur.execute("SELECT pg_try_advisory_lock(%s)", (LOOP_LOCK_KEY,))
+            if not cur.fetchone()[0]:
+                return [{"skipped": "content loop already running"}]
+        return _run_content_loop_locked()
+    finally:
+        try:
+            with lock_conn.cursor() as cur:
+                cur.execute("SELECT pg_advisory_unlock(%s)", (LOOP_LOCK_KEY,))
+        finally:
+            lock_conn.close()
+
+
+def _run_content_loop_locked():
     results = []
     for brand in get_active_brands():
+        brand_id = brand.get("brand_id")
         try:
-            last_posted = get_last_posted(brand["brand_id"])
-            if not is_due_for_post(brand, last_posted):
+            if has_pending_backlog(brand_id):
+                results.append(
+                    {"brand": brand_id, "skipped": "pending_approval backlog"}
+                )
+                continue
+            if not is_due_for_post(brand, get_last_activity(brand_id)):
                 continue
             results.extend(
                 generate_for_platforms(brand, brand.get("platforms") or [])
             )
         except Exception as exc:
             print(
-                f"[content_loop] run failed for brand={brand.get('brand_id')}: {exc}",
+                f"[content_loop] run failed for brand={brand_id}: {exc}",
                 file=sys.stderr,
             )
             traceback.print_exc(file=sys.stderr)
-            results.append({"brand": brand.get("brand_id"), "error": str(exc)})
+            results.append({"brand": brand_id, "error": str(exc)})
     return results

@@ -388,7 +388,11 @@ def save_image(image_bytes, brand_id, item_id):
                 f"IMAGE_DIR {IMAGE_DIR} does not exist and could not be created: {exc}"
             )
 
-    filename = f"{brand_id}_{item_id}_{int(time.time())}.png"
+    # Sanitize path components: brand_id comes from config/DB and item_id from
+    # callers; neither may introduce separators or dots into the filename.
+    safe_brand = re.sub(r"[^a-z0-9_-]", "", str(brand_id).lower()) or "brand"
+    safe_item = re.sub(r"[^a-z0-9_-]", "", str(item_id).lower()) or "item"
+    filename = f"{safe_brand}_{safe_item}_{int(time.time())}.png"
     path = os.path.join(IMAGE_DIR, filename)
     with open(path, "wb") as f:
         f.write(image_bytes)
@@ -429,7 +433,9 @@ def generate_and_save(brand_config, platform, draft_text, item_id, model=None):
     slots = generate_slots(prompt, model=model_used)
 
     # Resolve the illustration. Fall back gracefully: chosen -> default -> empty.
-    chosen_id = slots.get("illustration_id") or "default"
+    # Lowercase to match the library keys (lowercase filenames) — Claude
+    # sometimes returns "Growth_Arrow" and would silently miss otherwise.
+    chosen_id = str(slots.get("illustration_id") or "default").strip().lower()
     design_cfg = design_loader.get_design_config(brand_config)
     default_id = design_cfg.get("default_illustration")
     if chosen_id in illustrations:

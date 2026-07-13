@@ -78,6 +78,10 @@ def claim_item_status(item_id, new_status, expected_status="approved"):
     (the row existed with expected_status and was flipped), False if the
     item was already in a different status (already claimed by another
     request, already published/scheduled, or not approved).
+
+    Also stamps claimed_at for transient claims (publishing/scheduling) so
+    the cron sweep can recover items orphaned by a mid-publish crash, and
+    approved_at when the transition is an approval.
     """
     conn = get_conn()
     try:
@@ -85,15 +89,50 @@ def claim_item_status(item_id, new_status, expected_status="approved"):
             cur.execute(
                 """
                 UPDATE content_items
-                   SET status = %s
+                   SET status = %s,
+                       claimed_at = CASE WHEN %s IN ('publishing', 'scheduling')
+                                         THEN now() ELSE claimed_at END,
+                       approved_at = CASE WHEN %s = 'approved'
+                                          THEN now() ELSE approved_at END
                  WHERE id = %s AND status = %s
                 RETURNING id
                 """,
-                (new_status, item_id, expected_status),
+                (new_status, new_status, new_status, item_id, expected_status),
             )
             row = cur.fetchone()
             conn.commit()
             return row is not None
+    finally:
+        conn.close()
+
+
+def recover_stuck_claims(max_age_minutes=15):
+    """Revert items stuck in publishing/scheduling back to approved.
+
+    A crash between claim_item_status and the final update_status leaves an
+    item invisible in the queue with no retry path. The cron sweep calls this;
+    recovered items need a human to check the Facebook page before retrying,
+    because the Meta call may have succeeded before the crash.
+
+    Returns the recovered rows as [{id, brand, status_was}].
+    """
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE content_items
+                   SET status = 'approved'
+                 WHERE status IN ('publishing', 'scheduling')
+                   AND claimed_at IS NOT NULL
+                   AND claimed_at < now() - make_interval(mins => %s)
+                RETURNING id, brand, claimed_at
+                """,
+                (max_age_minutes,),
+            )
+            rows = cur.fetchall()
+            conn.commit()
+            return [{"id": r[0], "brand": r[1], "claimed_at": r[2]} for r in rows]
     finally:
         conn.close()
 
@@ -166,15 +205,73 @@ def get_content_item(item_id):
         conn.close()
 
 
+DELETABLE_STATUSES = ("pending_approval", "approved", "rejected", "scheduled")
+
+
 def delete_content_item(item_id):
-    """Hard-delete a content item. Returns True if a row was removed."""
+    """Hard-delete a content item, atomically gated on status.
+
+    Only rows in DELETABLE_STATUSES are removed — an item mid-publish
+    (`publishing`/`scheduling`) or already `posted` is left alone so a
+    concurrent publish task can't complete against a vanished row and
+    posted history (used for cadence) is preserved.
+
+    Returns True if a row was removed.
+    """
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM content_items WHERE id = %s", (item_id,))
+            cur.execute(
+                "DELETE FROM content_items WHERE id = %s AND status = ANY(%s)",
+                (item_id, list(DELETABLE_STATUSES)),
+            )
             deleted = cur.rowcount > 0
             conn.commit()
             return deleted
+    finally:
+        conn.close()
+
+
+def get_last_activity(brand_id):
+    """Return the created_at of the brand's newest non-rejected item, or None.
+
+    Cadence baseline for cron generation. Using content creation (not
+    posted_at) means schedule-only brands — which never accumulate `posted`
+    rows because Meta auto-publishes — are not treated as "always due".
+    """
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT max(created_at)
+                  FROM content_items
+                 WHERE brand = %s
+                   AND status != 'rejected'
+                """,
+                (brand_id,),
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def has_pending_backlog(brand_id):
+    """True if the brand has drafts still waiting for approval."""
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1
+                  FROM content_items
+                 WHERE brand = %s AND status = 'pending_approval'
+                 LIMIT 1
+                """,
+                (brand_id,),
+            )
+            return cur.fetchone() is not None
     finally:
         conn.close()
 

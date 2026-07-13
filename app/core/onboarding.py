@@ -242,6 +242,16 @@ def synthesize_brand(brand_id, display_name, answers):
         joined = "\n".join(f"- {m}" for m in msgs)
         answers_block += f"\n\n## {title}\n{joined}"
 
+    # Corrections given after a draft was rejected. These carry the
+    # operator's latest intent, so they override earlier answers.
+    revision_msgs = answers.get("revision_feedback", [])
+    if revision_msgs:
+        joined = "\n".join(f"- {m}" for m in revision_msgs)
+        answers_block += (
+            "\n\n## Revision feedback (given after reviewing a draft; "
+            "OVERRIDES any conflicting answers above)\n" + joined
+        )
+
     system_prompt = (
         "You are Nova, a brand voice architect. You take a business's onboarding "
         "interview answers and produce two artifacts: a voice.md system prompt and "

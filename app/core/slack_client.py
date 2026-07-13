@@ -255,6 +255,10 @@ def format_approved_action_blocks(item):
     brand_name = item.get("display_name") or item.get("brand") or "?"
     platform = item.get("platform") or "?"
     draft = item.get("draft_text") or ""
+    # Slack rejects section text over 3,000 chars; leave headroom for the
+    # brand/platform header line.
+    if len(draft) > 2900:
+        draft = draft[:2900].rstrip() + "…"
     item_id = item["id"]
     blocks = [
         {

@@ -269,8 +269,8 @@ def _handle_onboarding_action(action_id, brand_id, channel, thread_ts):
 
     if action_id == "onboard_regenerate":
         try:
-            # Pull any replies posted since the last draft (status was
-            # awaiting_approval) into the answers before re-synthesizing.
+            # session was re-read at handler entry, so answers includes any
+            # revision_feedback replies captured after a reject.
             answers = session["answers"]
             voice_md, config = onboarding.synthesize_brand(
                 brand_id, session["display_name"], answers
@@ -446,9 +446,35 @@ def _handle_approval(item_id, status, user_id, channel, message_ts,
                      original_blocks):
     """Background task: update content_items status and replace the Slack
     draft message in place with the resolved status line (+ Publish/Schedule
-    buttons for approved facebook drafts)."""
-    update_status(item_id, status)
+    buttons for approved facebook drafts).
+
+    The transition is claimed atomically from pending_approval so a stale
+    button (double-click, Slack retry, two users) can't flip an already
+    resolved item — e.g. resurrect a rejected draft to approved.
+    """
+    claimed = db.claim_item_status(
+        item_id, status, expected_status="pending_approval"
+    )
     item = db.get_content_item(item_id)
+    if not claimed:
+        current = item.get("status") if item else None
+        if current in ("approved", "rejected"):
+            # Already resolved: re-render the message for the actual state so
+            # both clicks converge on the same view.
+            status = current
+        else:
+            try:
+                update_message(
+                    channel, message_ts,
+                    blocks=format_publish_result_blocks(
+                        original_blocks,
+                        f":warning: No change — post #{item_id} is "
+                        f"`{current or 'deleted'}`, not pending approval.",
+                    ),
+                )
+            except Exception:
+                pass
+            return
     platform = item.get("platform") if item else None
     updated_blocks = format_resolved_approval_blocks(
         original_blocks, status, user_id,
@@ -578,37 +604,69 @@ def _handle_queue_refresh(channel, message_ts):
         )
 
 
+def _safe_result_update(channel, message_ts, original_blocks, status_text):
+    """Update the message with a final publish/schedule outcome, falling back
+    to a threaded reply if Slack rejects the update.
+
+    Used after the DB already reflects the true outcome: without the fallback
+    a Slack hiccup would leave the message wedged on "Publishing..." with the
+    real result invisible.
+    """
+    try:
+        update_message(
+            channel, message_ts,
+            blocks=format_publish_result_blocks(original_blocks, status_text),
+        )
+    except Exception:
+        try:
+            post_message(channel, text=status_text, thread_ts=message_ts)
+        except Exception:
+            pass
+
+
 def _handle_delete_item(item_id, user_id, channel, message_ts, original_blocks):
     """Background task: delete a post from the queue (Delete button).
 
-    If the item is scheduled on Meta, the scheduled Facebook post is cancelled
-    first. The DB row is only removed after Meta confirms, so a failed cancel
-    never leaves a live schedule pointing at a deleted item.
+    Deletion is status-gated (db.DELETABLE_STATUSES): items mid-publish or
+    already posted are refused, so a stale Delete button (e.g. on a queue-open
+    copy) can never orphan a live Facebook post. If the item is scheduled on
+    Meta, the scheduled Facebook post is cancelled first; the DB row is only
+    removed after Meta confirms.
     """
     from core import meta_publisher
 
-    item = db.get_content_item(item_id)
-    if not item:
+    def _refuse(status_text):
         update_message(
             channel, message_ts,
-            text=f"Post #{item_id} not found.",
-            blocks=format_publish_result_blocks(
-                original_blocks, f":x: Post #{item_id} not found (already deleted?)."
-            ),
+            text=f"Post #{item_id} was not deleted.",
+            blocks=format_publish_result_blocks(original_blocks, status_text),
+        )
+
+    item = db.get_content_item(item_id)
+    if not item:
+        _refuse(f":x: Post #{item_id} not found (already deleted?).")
+        return
+
+    status = item.get("status")
+    if status in ("publishing", "scheduling"):
+        _refuse(
+            f":hourglass_flowing_sand: Post #{item_id} has a publish in "
+            "flight — wait for it to finish, then try again."
+        )
+        return
+    if status == "posted":
+        _refuse(
+            f":no_entry: Post #{item_id} is already live on Facebook and "
+            "can't be deleted from Slack. Remove it on the page itself if needed."
         )
         return
 
-    if item.get("status") == "scheduled" and item.get("meta_post_id"):
+    if status == "scheduled" and item.get("meta_post_id"):
         creds, err = _meta_credentials_for_item(item)
         if err:
-            update_message(
-                channel, message_ts,
-                text=f"Could not delete post #{item_id}.",
-                blocks=format_publish_result_blocks(
-                    original_blocks,
-                    f":x: Cannot cancel the scheduled Facebook post: {err} "
-                    f"Item #{item_id} was *not* deleted.",
-                ),
+            _refuse(
+                f":x: Cannot cancel the scheduled Facebook post: {err} "
+                f"Item #{item_id} was *not* deleted."
             )
             return
         page_id, token = creds
@@ -617,18 +675,23 @@ def _handle_delete_item(item_id, user_id, channel, message_ts, original_blocks):
                 item["meta_post_id"], page_id=page_id, token=token
             )
         except Exception as exc:
-            update_message(
-                channel, message_ts,
-                text=f"Could not delete post #{item_id}.",
-                blocks=format_publish_result_blocks(
-                    original_blocks,
-                    f":x: Meta refused to cancel the scheduled post: {exc} "
-                    f"Item #{item_id} was *not* deleted.",
-                ),
+            _refuse(
+                f":x: Meta refused to cancel the scheduled post: {exc} "
+                f"Item #{item_id} was *not* deleted."
             )
             return
 
-    db.delete_content_item(item_id)
+    if not db.delete_content_item(item_id):
+        # Status changed between our read and the gated DELETE (e.g. a
+        # concurrent Publish claimed it). Report the actual state.
+        current = db.get_content_item(item_id)
+        now_status = current.get("status") if current else "already deleted"
+        _refuse(
+            f":x: Post #{item_id} was not deleted — its status is now "
+            f"`{now_status}`. Refresh the queue and try again if needed."
+        )
+        return
+
     by = f" by <@{user_id}>" if user_id else ""
     update_message(
         channel, message_ts,
@@ -733,11 +796,9 @@ def _handle_publish_now(item_id, channel, message_ts, original_blocks):
     except Exception as exc:
         # Release the claim so the user can retry.
         db.update_status(item_id, "approved")
-        update_message(
-            channel, message_ts,
-            blocks=format_publish_result_blocks(
-                original_blocks, f":x: Meta publish failed: {exc}"
-            ),
+        _safe_result_update(
+            channel, message_ts, original_blocks,
+            f":x: Meta publish failed: {exc}",
         )
         return
 
@@ -746,13 +807,10 @@ def _handle_publish_now(item_id, channel, message_ts, original_blocks):
         meta_post_id=meta_post_id,
         posted_at=datetime.now(timezone.utc),
     )
-    update_message(
-        channel, message_ts,
-        blocks=format_publish_result_blocks(
-            original_blocks,
-            f":rocket: Published to Facebook (page `{page_id}`). "
-            f"Meta post id: `{meta_post_id}`",
-        ),
+    _safe_result_update(
+        channel, message_ts, original_blocks,
+        f":rocket: Published to Facebook (page `{page_id}`). "
+        f"Meta post id: `{meta_post_id}`",
     )
 
 
@@ -855,25 +913,20 @@ def _handle_publish_schedule(item_id, selected_ts, channel, message_ts,
             meta_post_id=exc.post_id,
             scheduled_for=iso,
         )
-        update_message(
-            channel, message_ts,
-            blocks=format_publish_result_blocks(
-                original_blocks,
-                f":warning: Scheduled for {scheduled_dt.strftime('%Y-%m-%d %H:%M UTC')}, "
-                f"but could not confirm it's visible in Meta Planner yet. "
-                f"Meta post id: `{exc.post_id}`. Check the Planner manually; "
-                "do not schedule this item again.",
-            ),
+        _safe_result_update(
+            channel, message_ts, original_blocks,
+            f":warning: Scheduled for {scheduled_dt.strftime('%Y-%m-%d %H:%M UTC')}, "
+            f"but could not confirm it's visible in Meta Planner yet. "
+            f"Meta post id: `{exc.post_id}`. Check the Planner manually; "
+            "do not schedule this item again.",
         )
         return
     except Exception as exc:
         # Release the claim so the user can retry.
         db.update_status(item_id, "approved")
-        update_message(
-            channel, message_ts,
-            blocks=format_publish_result_blocks(
-                original_blocks, f":x: Meta schedule failed: {exc}"
-            ),
+        _safe_result_update(
+            channel, message_ts, original_blocks,
+            f":x: Meta schedule failed: {exc}",
         )
         return
 
@@ -882,11 +935,8 @@ def _handle_publish_schedule(item_id, selected_ts, channel, message_ts,
         meta_post_id=meta_post_id,
         scheduled_for=iso,
     )
-    update_message(
-        channel, message_ts,
-        blocks=format_publish_result_blocks(
-            original_blocks,
-            f":calendar: Scheduled for {scheduled_dt.strftime('%Y-%m-%d %H:%M UTC')}. "
-            f"Meta post id: `{meta_post_id}`",
-        ),
+    _safe_result_update(
+        channel, message_ts, original_blocks,
+        f":calendar: Scheduled for {scheduled_dt.strftime('%Y-%m-%d %H:%M UTC')}. "
+        f"Meta post id: `{meta_post_id}`",
     )

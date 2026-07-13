@@ -18,9 +18,28 @@ from routes.static import router as static_router
 
 app = FastAPI(title="Content Loop Agent", version="1.7.1")
 
+# Fail loudly at boot instead of KeyError deep inside a Slack background task
+# (which acks 200 and then dies invisibly). Startup still proceeds so the
+# health endpoint can report the problem.
+REQUIRED_ENV = ("DATABASE_URL", "SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET",
+                "ANTHROPIC_API_KEY")
+_MISSING_ENV = [k for k in REQUIRED_ENV if not os.environ.get(k)]
+if _MISSING_ENV:
+    print(
+        f"[main] FATAL CONFIG: missing required env vars: {', '.join(_MISSING_ENV)} "
+        "— Slack buttons and generation WILL fail until these are set.",
+        file=sys.stderr,
+    )
+
 
 @app.get("/")
 def health():
+    if _MISSING_ENV:
+        return {
+            "status": "degraded",
+            "service": "content-loop",
+            "missing_env": _MISSING_ENV,
+        }
     return {"status": "ok", "service": "content-loop"}
 
 
