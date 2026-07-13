@@ -1,0 +1,10 @@
+<g>
+  <!-- Shield for navy canvas. -->
+  <circle cx="180" cy="180" r="150" fill="none" stroke="#C4A35A" stroke-width="1.5" opacity="0.35"/>
+
+  <path d="M180 80 L260 112 L260 196 Q260 248 180 288 Q100 248 100 196 L100 112 Z" fill="#071428" stroke="#C4A35A" stroke-width="2"/>
+  <path d="M180 100 L242 126 L242 194 Q242 236 180 270 Q118 236 118 194 L118 126 Z" fill="#0B1D36" stroke="#D4BC7A" stroke-width="1.2"/>
+
+  <path d="M148 188 L172 212 L218 158" stroke="#F7F4EC" stroke-width="10" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="180" cy="80" r="10" fill="#C4A35A"/>
+</g>

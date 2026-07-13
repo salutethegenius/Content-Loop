@@ -1,6 +1,6 @@
 # Content Loop Agent
 
-Brand-agnostic content loop. FastAPI on Railway, Postgres on Railway, Slack approval flow, Claude API for drafting. V1 is text-only: drafts land in Slack for Approve/Reject, approved items sit in `content_items` with `status = 'approved'` and you post them manually. No Meta publishing, no image generation yet.
+Brand-agnostic content loop. FastAPI on Railway, Postgres on Railway, Slack approval flow, Claude API for drafting. Live path: generate drafts → Slack Approve/Reject → optional Generate image → Publish/Schedule to Facebook via Meta Graph API (Page Access Token). See `HANDOFF.md` for the current ops truth; this README is a quick start.
 
 ## Architecture
 
@@ -95,17 +95,14 @@ Nova posts a welcome message + Phase 1 questions into a new thread in the channe
 
 To restart an onboarding for a brand, hit `/onboard/start` again with the same `brand_id` - the session resets.
 
-## V1 done state
+## Publishing + images (see HANDOFF.md)
 
-Approved items sit in `content_items` with `status = 'approved'`. You post them by hand. That is the whole V1 loop.
-
-## V2 hooks (not built)
-
-- `/publish` endpoint that selects approved items and pushes to Meta Graph API or the Pipeboard Meta Ads MCP tool.
-- Image generation wired through Auto mode (routes between Grok, Gemini, ChatGPT) into `generator.generate_image`.
+- Facebook publish/schedule: direct Meta Graph API (`meta_publisher.py`). Per-brand `meta_page_id` + `meta_token_env` on each brand config.
+- Image generation: design-system templates under `app/brands/{id}/template.svg` + `illustrations/`. Slack **Generate image** button.
+- Env: `META_PAGE_ID` / `META_PAGE_ACCESS_TOKEN` (BICCU), `META_KGC_PAGE_ACCESS_TOKEN` (KGC). Full checklist in HANDOFF §15 and §18.
 
 ## Open items for Kenneth
 
 - Confirm posting cadence per brand. Currently defaulted to `3` days in each `config.json`.
-- Edit button behavior: onboarding uses Regenerate (re-runs Claude on the accumulated answers). Content approval is Approve/Reject only.
-- Image generation: stubbed now, wire in a later pass.
+- KGC: set The Kemis Group `meta_page_id` + Railway `META_KGC_PAGE_ACCESS_TOKEN` (HANDOFF §15).
+- Instagram publishing deferred.

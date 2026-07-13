@@ -5,6 +5,19 @@
   "platforms": ["facebook", "instagram"],
   "posting_cadence_days": 3,
   "image_style_prompt": "credit-union blue and white, community-forward, clean",
+  "meta_page_id": "120368170965",
+  "meta_token_env": "META_PAGE_ACCESS_TOKEN",
+  "footer": {
+    "website": "biccu.org",
+    "phone": "(242) 601-5900",
+    "tagline": "Building Stronger Together",
+    "hashtag": "#CommunityFirst",
+    "social": {
+      "facebook": "BICCU",
+      "instagram": "biccu",
+      "linkedin": "biccu"
+    }
+  },
   "design": {
     "template": "template.svg",
     "illustrations_dir": "illustrations",
