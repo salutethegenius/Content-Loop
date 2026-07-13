@@ -179,6 +179,19 @@ async def handle_interaction(request: Request, background_tasks: BackgroundTasks
         )
         return {"ok": True}
 
+    # --- Delete a post (queue cleanup) ---
+    if action_id == "delete_item":
+        try:
+            item_id = int(value.rsplit("_", 1)[1])
+        except (IndexError, ValueError):
+            raise HTTPException(status_code=400, detail="Bad action value")
+        user_id = (payload.get("user") or {}).get("id")
+        background_tasks.add_task(
+            _handle_delete_item, item_id, user_id, channel, message.get("ts"),
+            message.get("blocks"),
+        )
+        return {"ok": True}
+
     # --- Onboarding actions (defer slow work to background) ---
     if action_id in ("onboard_approve", "onboard_reject", "onboard_regenerate"):
         brand_id = value
@@ -563,6 +576,75 @@ def _handle_queue_refresh(channel, message_ts):
             text=f"(could not refresh queue: {exc})",
             thread_ts=message_ts,
         )
+
+
+def _handle_delete_item(item_id, user_id, channel, message_ts, original_blocks):
+    """Background task: delete a post from the queue (Delete button).
+
+    If the item is scheduled on Meta, the scheduled Facebook post is cancelled
+    first. The DB row is only removed after Meta confirms, so a failed cancel
+    never leaves a live schedule pointing at a deleted item.
+    """
+    from core import meta_publisher
+
+    item = db.get_content_item(item_id)
+    if not item:
+        update_message(
+            channel, message_ts,
+            text=f"Post #{item_id} not found.",
+            blocks=format_publish_result_blocks(
+                original_blocks, f":x: Post #{item_id} not found (already deleted?)."
+            ),
+        )
+        return
+
+    if item.get("status") == "scheduled" and item.get("meta_post_id"):
+        creds, err = _meta_credentials_for_item(item)
+        if err:
+            update_message(
+                channel, message_ts,
+                text=f"Could not delete post #{item_id}.",
+                blocks=format_publish_result_blocks(
+                    original_blocks,
+                    f":x: Cannot cancel the scheduled Facebook post: {err} "
+                    f"Item #{item_id} was *not* deleted.",
+                ),
+            )
+            return
+        page_id, token = creds
+        try:
+            meta_publisher.delete_post(
+                item["meta_post_id"], page_id=page_id, token=token
+            )
+        except Exception as exc:
+            update_message(
+                channel, message_ts,
+                text=f"Could not delete post #{item_id}.",
+                blocks=format_publish_result_blocks(
+                    original_blocks,
+                    f":x: Meta refused to cancel the scheduled post: {exc} "
+                    f"Item #{item_id} was *not* deleted.",
+                ),
+            )
+            return
+
+    db.delete_content_item(item_id)
+    by = f" by <@{user_id}>" if user_id else ""
+    update_message(
+        channel, message_ts,
+        text=f"Post #{item_id} deleted.",
+        blocks=[
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": f":wastebasket: Post #{item_id} deleted{by}.",
+                    }
+                ],
+            }
+        ],
+    )
 
 
 def _meta_credentials_for_item(item):

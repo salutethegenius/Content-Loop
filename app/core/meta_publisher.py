@@ -290,6 +290,27 @@ def verify_scheduled_post(post_id, page_id=None, token=None):
     )
 
 
+def delete_post(post_id, page_id=None, token=None):
+    """Delete a Page post (works for scheduled/unpublished posts too).
+
+    Used by the Slack Delete button to cancel a Meta-scheduled post before
+    removing the item from the queue. Raises RuntimeError on API errors.
+    """
+    page_id, token = _resolve(page_id, token)
+    if not token:
+        raise RuntimeError("Meta page token not set")
+    resp = requests.delete(
+        f"{GRAPH_BASE}/{API_VERSION}/{post_id}",
+        params={"access_token": token},
+        timeout=15,
+    )
+    data = resp.json()
+    _raise_if_error(data, "Meta post delete failed")
+    if not data.get("success", True):
+        raise RuntimeError(f"Meta post delete returned {data}")
+    return data
+
+
 def verify_token(page_id=None, token=None):
     """Sanity check that the page token works. Returns the page name on success."""
     page_id, token = _resolve(page_id, token)

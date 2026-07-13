@@ -166,6 +166,19 @@ def get_content_item(item_id):
         conn.close()
 
 
+def delete_content_item(item_id):
+    """Hard-delete a content item. Returns True if a row was removed."""
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM content_items WHERE id = %s", (item_id,))
+            deleted = cur.rowcount > 0
+            conn.commit()
+            return deleted
+    finally:
+        conn.close()
+
+
 def get_last_posted(brand_id):
     """Return the most recent posted_at for a brand, or None if never posted."""
     conn = get_conn()

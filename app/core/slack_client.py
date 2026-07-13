@@ -22,6 +22,30 @@ def _extract_item_id_from_blocks(blocks):
     return None
 
 
+def _delete_button(item_id):
+    """Danger-styled Delete button with a Slack confirm dialog."""
+    return {
+        "type": "button",
+        "style": "danger",
+        "text": {"type": "plain_text", "text": "Delete"},
+        "value": f"delete_item_{item_id}",
+        "action_id": "delete_item",
+        "confirm": {
+            "title": {"type": "plain_text", "text": "Delete this post?"},
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    "This removes the post from the queue. If it is already "
+                    "scheduled on Facebook, the scheduled post is cancelled "
+                    "too. This cannot be undone."
+                ),
+            },
+            "confirm": {"type": "plain_text", "text": "Delete"},
+            "deny": {"type": "plain_text", "text": "Keep"},
+        },
+    }
+
+
 def format_resolved_approval_blocks(original_blocks, status, user_id=None,
                                     item_id=None, platform=None):
     """Replace Approve/Reject buttons with a status line on the draft message.
@@ -65,6 +89,7 @@ def format_resolved_approval_blocks(original_blocks, status, user_id=None,
                         "value": f"publish_schedule_{item_id}",
                         "action_id": "publish_schedule",
                     },
+                    _delete_button(item_id),
                 ],
             }
         )
@@ -302,6 +327,7 @@ def format_approved_action_blocks(item):
                 ],
             }
         )
+    actions.append(_delete_button(item_id))
     blocks.append({"type": "actions", "elements": actions})
     return blocks
 
