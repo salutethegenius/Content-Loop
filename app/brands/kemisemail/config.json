@@ -1,0 +1,31 @@
+{
+  "brand_id": "kemisemail",
+  "display_name": "Kemis Email",
+  "active": true,
+  "platforms": ["facebook", "instagram"],
+  "posting_cadence_days": 3,
+  "image_style_prompt": "warm coral and white, email and inbox motifs, friendly, modern",
+  "meta_page_id": "107900225710334",
+  "meta_token_env": "META_KEMIS_EMAIL_PAGE_ACCESS_TOKEN",
+  "footer": {
+    "website": "kemisemail.com",
+    "phone": "hello@thekemisgroup.com",
+    "tagline": "Inbox-Friendly Email Marketing",
+    "hashtag": "#KemisEmail",
+    "social": {
+      "facebook": "KemisEmail",
+      "instagram": "kemisemail",
+      "linkedin": "kemisemail"
+    }
+  },
+  "visual_identity": {
+    "wordmark_text": "KEMIS EMAIL",
+    "typography_style": "geometric sans-serif, bold headlines",
+    "colors": {
+      "primary": "#F97316",
+      "navy": "#1F2937",
+      "accent": "#38BDF8",
+      "base": "#FFF7ED"
+    }
+  }
+}

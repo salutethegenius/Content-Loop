@@ -1,0 +1,21 @@
+{
+  "brand_id": "bahamas_open_data",
+  "display_name": "Bahamas Open Data",
+  "active": true,
+  "platforms": ["facebook", "instagram"],
+  "posting_cadence_days": 3,
+  "image_style_prompt": "transparent civic tech, ocean blue and sand gold, data-forward, clean",
+  "meta_page_id": "917388931453271",
+  "meta_token_env": "META_BAHAMAS_OPEN_DATA_PAGE_ACCESS_TOKEN",
+  "footer": {
+    "website": "opendata.bahamas.gov.bs",
+    "phone": "",
+    "tagline": "Open Data for The Bahamas",
+    "hashtag": "#BahamasOpenData",
+    "social": {
+      "facebook": "BahamasOpenData",
+      "instagram": "bahamasopendata",
+      "linkedin": ""
+    }
+  }
+}

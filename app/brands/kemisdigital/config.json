@@ -1,0 +1,31 @@
+{
+  "brand_id": "kemisdigital",
+  "display_name": "Kemis Digital",
+  "active": true,
+  "platforms": ["facebook", "instagram"],
+  "posting_cadence_days": 3,
+  "image_style_prompt": "modern tech-forward navy and electric blue, clean digital interfaces, confident and approachable",
+  "meta_page_id": "189755601088779",
+  "meta_token_env": "META_KEMIS_DIGITAL_PAGE_ACCESS_TOKEN",
+  "footer": {
+    "website": "kemisdigital.com",
+    "phone": "hello@thekemisgroup.com",
+    "tagline": "Digital Tools That Move Business Forward",
+    "hashtag": "#KemisDigital",
+    "social": {
+      "facebook": "KemisDigital",
+      "instagram": "kemisdigital",
+      "linkedin": "kemisdigital"
+    }
+  },
+  "visual_identity": {
+    "wordmark_text": "KEMIS DIGITAL",
+    "typography_style": "geometric sans-serif, bold headlines",
+    "colors": {
+      "primary": "#2563EB",
+      "navy": "#0F172A",
+      "accent": "#C4A35A",
+      "base": "#F8FAFC"
+    }
+  }
+}

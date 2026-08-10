@@ -4,5 +4,7 @@
   "active": true,
   "platforms": ["facebook", "instagram"],
   "posting_cadence_days": 3,
-  "image_style_prompt": "warm, human, documentary-style, natural light"
+  "image_style_prompt": "warm, human, documentary-style, natural light",
+  "meta_page_id": "538112372716111",
+  "meta_token_env": "META_DREWBER_PAGE_ACCESS_TOKEN"
 }

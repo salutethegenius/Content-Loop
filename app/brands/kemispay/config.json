@@ -1,0 +1,21 @@
+{
+  "brand_id": "kemispay",
+  "display_name": "KemisPay",
+  "active": true,
+  "platforms": ["facebook", "instagram"],
+  "posting_cadence_days": 3,
+  "image_style_prompt": "modern fintech, clean teal and white, digital payments, friendly and secure",
+  "meta_page_id": "1247797335082621",
+  "meta_token_env": "META_KEMISPAY_PAGE_ACCESS_TOKEN",
+  "footer": {
+    "website": "kemispay.com",
+    "phone": "",
+    "tagline": "Simple, Secure Payments",
+    "hashtag": "#KemisPay",
+    "social": {
+      "facebook": "KemisPay",
+      "instagram": "kemispay",
+      "linkedin": ""
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "brand_id": "lawbey",
+  "display_name": "LawBey",
+  "active": true,
+  "platforms": ["facebook", "instagram"],
+  "posting_cadence_days": 3,
+  "image_style_prompt": "professional legal tech, deep navy and warm gold, trustworthy, editorial",
+  "meta_page_id": "757109994157700",
+  "meta_token_env": "META_LAWBEY_PAGE_ACCESS_TOKEN",
+  "footer": {
+    "website": "lawbey.com",
+    "phone": "",
+    "tagline": "Legal Clarity, Modern Access",
+    "hashtag": "#LawBey",
+    "social": {
+      "facebook": "LawBey",
+      "instagram": "lawbey",
+      "linkedin": ""
+    }
+  }
+}
