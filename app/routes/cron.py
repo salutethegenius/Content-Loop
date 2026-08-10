@@ -1,21 +1,21 @@
 import os
-import secrets
-from fastapi import APIRouter, Header, HTTPException
+
+from fastapi import APIRouter, Header
 
 from core import db
 from core.content_loop import run_content_loop
+from routes.deps import require_cron_secret
 
 router = APIRouter()
-
-CRON_SECRET = os.environ.get("CRON_SECRET", "")
 
 
 def _sweep_stuck_claims():
     """Recover items orphaned in publishing/scheduling by a mid-publish crash.
 
-    Reverts them to approved and alerts the content channel: the operator
-    must check the Facebook page before re-publishing, because the Meta call
-    may have succeeded right before the crash.
+    Parks them as needs_review (no auto-retry) and alerts the content
+    channel: the operator must check the Facebook page first, because the
+    Meta call may have succeeded right before the crash and a blind retry
+    would create a duplicate post.
     """
     try:
         recovered = db.recover_stuck_claims(max_age_minutes=15)
@@ -30,9 +30,10 @@ def _sweep_stuck_claims():
                 os.environ.get("SLACK_CONTENT_CHANNEL", ""),
                 text=(
                     f":warning: Recovered {len(recovered)} post(s) stuck "
-                    f"mid-publish: {ids}. They are back to *approved* — check "
-                    "the Facebook page before re-publishing, the original "
-                    "publish may have gone through."
+                    f"mid-publish: {ids}. They are parked as *needs review* — "
+                    "check the Facebook page first: if the post went live, "
+                    "delete the item from the /nova queue; if not, open it "
+                    "there and publish again."
                 ),
             )
         except Exception:
@@ -43,10 +44,7 @@ def _sweep_stuck_claims():
 @router.post("/cron/generate")
 def run_content_loop_endpoint(x_cron_secret: str | None = Header(default=None)):
     """Generate one draft per due brand/platform and post it to Slack for approval."""
-    if not CRON_SECRET or not x_cron_secret or not secrets.compare_digest(
-        x_cron_secret, CRON_SECRET
-    ):
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    require_cron_secret(x_cron_secret)
 
     recovered = _sweep_stuck_claims()
     results = run_content_loop()

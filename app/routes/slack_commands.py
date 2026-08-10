@@ -46,7 +46,6 @@ async def handle_slash_command(request: Request):
     command = (parsed.get("command", [""])[0] or "").strip()
     text = (parsed.get("text", [""])[0] or "").strip().lower()
     user_id = parsed.get("user_id", [""])[0] or "someone"
-    user_name = parsed.get("user_name", [""])[0] or user_id
 
     if command and command != "/nova":
         return JSONResponse(

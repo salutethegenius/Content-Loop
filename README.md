@@ -24,9 +24,13 @@ flowchart LR
 
 ```
 app/main.py
-app/brands/{kgc,juber,bcu}/{config.json,voice.md}
-app/core/{brand_loader,db,generator,slack_client}.py
-app/routes/{cron,slack_interactions}.py
+app/brands/{biccu,kgc,drewber,lawbey,kemispay,kemisdigital,kemisemail,bahamas_open_data}/
+    config.json, voice.md, and (biccu/kgc only) template.svg + illustrations/
+app/core/{brand_loader,content_loop,db,design_loader,generation_flow,
+          generator,image_generator,meta_publisher,onboarding,slack_client,
+          slack_verify}.py
+app/routes/{cron,deps,generate,onboarding,publish,slack_commands,
+            slack_events,slack_interactions,static}.py
 schema.sql
 ```
 
@@ -72,7 +76,9 @@ uvicorn app.main:app --reload --port 8000
 **Event Subscriptions (Interactivity & Shortcuts + Event Subscriptions):**
 - Enable **Interactivity**, Request URL: `https://{railway-domain}/slack/interactions`
 - Enable **Event Subscriptions**, Request URL: `https://{railway-domain}/slack/events`
-- Subscribe to bot events: `message.channels` (so onboarding thread replies reach the app)
+- Subscribe to bot events: `message.channels` **and** `message.groups` — the
+  ops channel is private, and without `message.groups` onboarding thread
+  replies in private channels never reach the app
 
 **In Slack:**
 - Invite the bot to the content approval channel: `/invite @Content Loop`
@@ -91,18 +97,19 @@ curl -X POST -H "X-Cron-Secret: <value>" \
   https://{railway-domain}/onboard/start
 ```
 
-Nova posts a welcome message + Phase 1 questions into a new thread in the channel. The business replies in the thread (one or several messages), then types `next` to advance. Six phases: identity, voice, content territory, compliance, platform behavior, cadence. After Phase 6, Nova synthesizes a `voice.md` + `config.json` via Claude and posts it with Approve / Reject / Regenerate buttons. Approve persists the brand and it appears in the next cron run.
+Nova posts a welcome message + Phase 1 questions into a new thread in the channel. The business replies in the thread (one or several messages), then types `next` to advance. Seven phases: identity, voice, content territory, compliance, platform behavior, cadence, visual identity. After the last phase, Nova synthesizes a `voice.md` + `config.json` via Claude and posts it with Approve / Reject / Regenerate buttons. Approve persists the brand and it appears in the next cron run.
 
 To restart an onboarding for a brand, hit `/onboard/start` again with the same `brand_id` - the session resets.
 
 ## Publishing + images (see HANDOFF.md)
 
 - Facebook publish/schedule: direct Meta Graph API (`meta_publisher.py`). Per-brand `meta_page_id` + `meta_token_env` on each brand config.
-- Image generation: design-system templates under `app/brands/{id}/template.svg` + `illustrations/`. Slack **Generate image** button.
-- Env: `META_PAGE_ID` / `META_PAGE_ACCESS_TOKEN` (BICCU), `META_KGC_PAGE_ACCESS_TOKEN` (KGC). Full checklist in HANDOFF §15 and §18.
+- Image generation: design-system templates under `app/brands/{id}/template.svg` + `illustrations/`. Slack **Generate image** button. Only `biccu` and `kgc` ship templates today; brands without one get a friendly "no design system yet" message in Slack.
+- Env: `META_PAGE_ID` / `META_PAGE_ACCESS_TOKEN` (BICCU), `META_KGC_PAGE_ACCESS_TOKEN` (KGC), plus one `META_*_PAGE_ACCESS_TOKEN` per additional brand (see `.env.example`). Full checklist in HANDOFF §15 and §18.
 
 ## Open items for Kenneth
 
 - Confirm posting cadence per brand. Currently defaulted to `3` days in each `config.json`.
-- KGC: set The Kemis Group `meta_page_id` + Railway `META_KGC_PAGE_ACCESS_TOKEN` (HANDOFF §15).
+- New brand seeds (drewber, lawbey, kemispay, kemisdigital, kemisemail, bahamas_open_data): set the per-brand `META_*_PAGE_ACCESS_TOKEN` env vars on Railway before publishing, and run Nova onboarding for full-voice drafts (lawbey/kemispay/bahamas_open_data have stub voice files).
+- Design templates (`template.svg` + `illustrations/`) exist only for biccu and kgc; other brands are text-only until templates are added.
 - Instagram publishing deferred.

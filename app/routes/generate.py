@@ -1,5 +1,4 @@
 import os
-import secrets
 
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
@@ -7,10 +6,9 @@ from pydantic import BaseModel
 from core.brand_loader import get_active_brands
 from core.generation_flow import format_brand_picker_blocks
 from core.slack_client import post_message
+from routes.deps import require_cron_secret
 
 router = APIRouter()
-
-CRON_SECRET = os.environ.get("CRON_SECRET", "")
 
 
 class GenerateStartRequest(BaseModel):
@@ -26,10 +24,7 @@ def start_generation(
 
     Posts a brand picker. Button clicks continue in /slack/interactions.
     """
-    if not CRON_SECRET or not x_cron_secret or not secrets.compare_digest(
-        x_cron_secret, CRON_SECRET
-    ):
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    require_cron_secret(x_cron_secret)
 
     channel = (body.channel if body and body.channel else None) or os.environ.get(
         "SLACK_CONTENT_CHANNEL", ""

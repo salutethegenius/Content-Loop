@@ -2,7 +2,7 @@
 
 from core import db
 from core.brand_loader import get_brand_by_id
-from core.content_loop import generate_for_platforms
+from core.content_loop import generate_for_platforms, try_with_loop_lock
 from core.slack_client import format_queue_blocks, post_message
 
 PLATFORM_ORDER = ["facebook", "instagram", "linkedin"]
@@ -37,10 +37,11 @@ def format_brand_picker_blocks(brands):
                 ),
             },
         },
-        {"type": "actions", "elements": elements[:5]},
     ]
-    if len(elements) > 5:
-        blocks.append({"type": "actions", "elements": elements[5:10]})
+    # Slack allows max 5 buttons per actions block; chunk so every brand
+    # gets a button no matter how many brands exist.
+    for i in range(0, len(elements), 5):
+        blocks.append({"type": "actions", "elements": elements[i : i + 5]})
     return blocks
 
 
@@ -266,7 +267,21 @@ def handle_confirm(brand_id, platforms, channel, thread_ts):
         thread_ts=thread_ts,
     )
 
-    results = generate_for_platforms(brand, valid)
+    # Same advisory lock as the cron loop, so an interactive run can't race
+    # a cron fire and create duplicate drafts for the same brand/platform.
+    acquired, results = try_with_loop_lock(
+        lambda: generate_for_platforms(brand, valid)
+    )
+    if not acquired:
+        post_message(
+            channel,
+            text=(
+                "Another generation run is in progress (cron or another "
+                "/nova). Try again in a minute."
+            ),
+            thread_ts=thread_ts,
+        )
+        return
     if not results:
         post_message(
             channel,

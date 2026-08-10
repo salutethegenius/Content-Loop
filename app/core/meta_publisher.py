@@ -84,11 +84,41 @@ def resolve_for_brand(brand_config):
     return page_id, token
 
 
+def resolve_for_item(item):
+    """Resolve (page_id, token) from a content item's brand config.
+
+    Raises RuntimeError with a user-facing message when the brand is
+    unknown/inactive or its Meta credentials are missing.
+    """
+    from core.brand_loader import get_brand_by_id
+
+    brand_id = item.get("brand")
+    brand = get_brand_by_id(brand_id) if brand_id else None
+    if not brand:
+        raise RuntimeError(
+            f"Unknown or inactive brand '{brand_id}' — cannot publish."
+        )
+    return resolve_for_brand(brand)
+
+
 def _resolve(page_id, token):
     """Legacy resolve for explicit page_id/token args (env fallback)."""
     return page_id or os.environ.get("META_PAGE_ID"), token or os.environ.get(
         DEFAULT_TOKEN_ENV
     )
+
+
+def _json_or_raise(resp, label):
+    """Parse a Graph response body as JSON, surfacing non-JSON bodies (HTML
+    gateway errors, empty bodies) as a readable RuntimeError instead of a
+    JSONDecodeError deep in the caller."""
+    try:
+        return resp.json()
+    except ValueError:
+        raise RuntimeError(
+            f"{label}: non-JSON response (HTTP {resp.status_code}): "
+            f"{resp.text[:200]!r}"
+        )
 
 
 def _raise_if_error(data, label):
@@ -162,7 +192,7 @@ def publish_page_post(message, page_id=None, token=None, image_url=None):
             data={"message": message, "access_token": token},
             timeout=20,
         )
-    data = resp.json()
+    data = _json_or_raise(resp, "Meta publish failed")
     return _extract_post_id(data, "Meta publish failed")
 
 
@@ -182,7 +212,7 @@ def _upload_temporary_photo(page_id, token, image_url):
         },
         timeout=30,
     )
-    data = resp.json()
+    data = _json_or_raise(resp, "Meta photo upload failed")
     _raise_if_error(data, "Meta photo upload failed")
     photo_id = data.get("id")
     if not photo_id:
@@ -233,7 +263,7 @@ def schedule_page_post(message, scheduled_for_iso, page_id=None, token=None,
             },
             timeout=20,
         )
-    data = resp.json()
+    data = _json_or_raise(resp, "Meta schedule failed")
     post_id = _extract_post_id(data, "Meta schedule failed")
 
     # Soft verify: confirm the post is queryable as scheduled. Raise a
@@ -271,7 +301,7 @@ def verify_scheduled_post(post_id, page_id=None, token=None):
         },
         timeout=15,
     )
-    data = resp.json()
+    data = _json_or_raise(resp, "Meta schedule verify failed")
     _raise_if_error(data, "Meta schedule verify failed")
     if data.get("scheduled_publish_time"):
         return data
@@ -283,7 +313,7 @@ def verify_scheduled_post(post_id, page_id=None, token=None):
     params = {"fields": "id,scheduled_publish_time", "access_token": token}
     for _page in range(3):
         edge = requests.get(url, params=params, timeout=15)
-        edge_data = edge.json()
+        edge_data = _json_or_raise(edge, "Meta scheduled_posts list failed")
         _raise_if_error(edge_data, "Meta scheduled_posts list failed")
         ids |= {row.get("id") for row in (edge_data.get("data") or [])}
         next_url = ((edge_data.get("paging") or {}).get("next"))
@@ -347,7 +377,7 @@ def verify_token(page_id=None, token=None):
         params={"fields": "name", "access_token": token},
         timeout=15,
     )
-    data = resp.json()
+    data = _json_or_raise(resp, "Meta token verify failed")
     if "name" not in data:
         raise RuntimeError(f"Meta token verify failed: {data}")
     return data["name"]

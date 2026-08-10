@@ -10,38 +10,15 @@ Slack requires a 200 response within 3 seconds, so synthesis (slow Claude
 call) happens in a FastAPI BackgroundTask after we acknowledge.
 """
 
-import hashlib
-import hmac
 import json
-import os
-import time
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from core import db, onboarding
 from core.slack_client import post_message
+from core.slack_verify import verify_slack_signature
 
 router = APIRouter()
-
-SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET", "")
-REPLAY_TOLERANCE_SECONDS = 60 * 5
-
-
-def _verify_slack_signature(timestamp: str, signature: str, body: bytes) -> bool:
-    signing_secret = os.environ.get("SLACK_SIGNING_SECRET", "")
-    if not signing_secret or not timestamp or not signature:
-        return False
-    try:
-        ts_int = int(timestamp)
-    except (TypeError, ValueError):
-        return False
-    if abs(time.time() - ts_int) > REPLAY_TOLERANCE_SECONDS:
-        return False
-    base = f"v0:{timestamp}:".encode() + body
-    expected = "v0=" + hmac.new(
-        signing_secret.encode(), base, hashlib.sha256
-    ).hexdigest()
-    return hmac.compare_digest(expected, signature)
 
 
 @router.post("/slack/events")
@@ -50,8 +27,15 @@ async def slack_events(request: Request, background_tasks: BackgroundTasks):
     timestamp = request.headers.get("X-Slack-Request-Timestamp", "")
     signature = request.headers.get("X-Slack-Signature", "")
 
-    if not _verify_slack_signature(timestamp, signature, raw_body):
+    if not verify_slack_signature(timestamp, signature, raw_body):
         raise HTTPException(status_code=401, detail="Invalid Slack signature")
+
+    # Slack retries events it thinks timed out (3s window). We ack fast and
+    # process in the background, so a retry means the original delivery is
+    # already being handled — processing it again would double-append answers
+    # or double-advance the onboarding phase.
+    if request.headers.get("X-Slack-Retry-Num"):
+        return {"ok": True}
 
     try:
         payload = json.loads(raw_body.decode())

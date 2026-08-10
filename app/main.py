@@ -22,7 +22,7 @@ app = FastAPI(title="Content Loop Agent", version="1.7.1")
 # (which acks 200 and then dies invisibly). Startup still proceeds so the
 # health endpoint can report the problem.
 REQUIRED_ENV = ("DATABASE_URL", "SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET",
-                "ANTHROPIC_API_KEY")
+                "SLACK_CONTENT_CHANNEL", "ANTHROPIC_API_KEY")
 _MISSING_ENV = [k for k in REQUIRED_ENV if not os.environ.get(k)]
 if _MISSING_ENV:
     print(

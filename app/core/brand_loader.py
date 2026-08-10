@@ -145,6 +145,12 @@ def load_voice(brand_id):
         pass
 
     voice_path = os.path.join(BRANDS_DIR, brand_id, "voice.md")
+    if not os.path.isfile(voice_path):
+        raise RuntimeError(
+            f"Brand '{brand_id}' has no voice: no DB voice_md and no "
+            f"voice.md on disk (expected app/brands/{brand_id}/voice.md). "
+            "Onboard the brand or add the file."
+        )
     with open(voice_path) as f:
         return f.read()
 

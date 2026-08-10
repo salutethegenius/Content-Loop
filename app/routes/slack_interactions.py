@@ -1,14 +1,10 @@
-import hashlib
-import hmac
 import json
-import os
-import time
 from urllib.parse import parse_qs
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from core import db, generation_flow, onboarding
-from core.db import update_status
+from core.slack_verify import verify_slack_signature
 from core.slack_client import (
     format_approved_action_blocks,
     format_draft_with_image_blocks,
@@ -21,25 +17,6 @@ from core.slack_client import (
 )
 
 router = APIRouter()
-
-REPLAY_TOLERANCE_SECONDS = 60 * 5
-
-
-def _verify_slack_signature(timestamp: str, signature: str, body: bytes) -> bool:
-    signing_secret = os.environ.get("SLACK_SIGNING_SECRET", "")
-    if not signing_secret or not timestamp or not signature:
-        return False
-    try:
-        ts_int = int(timestamp)
-    except (TypeError, ValueError):
-        return False
-    if abs(time.time() - ts_int) > REPLAY_TOLERANCE_SECONDS:
-        return False
-    base = f"v0:{timestamp}:".encode() + body
-    expected = "v0=" + hmac.new(
-        signing_secret.encode(), base, hashlib.sha256
-    ).hexdigest()
-    return hmac.compare_digest(expected, signature)
 
 
 @router.post("/slack/interactions")
@@ -56,7 +33,7 @@ async def handle_interaction(request: Request, background_tasks: BackgroundTasks
     timestamp = request.headers.get("X-Slack-Request-Timestamp", "")
     signature = request.headers.get("X-Slack-Signature", "")
 
-    if not _verify_slack_signature(timestamp, signature, raw_body):
+    if not verify_slack_signature(timestamp, signature, raw_body):
         raise HTTPException(status_code=401, detail="Invalid Slack signature")
 
     parsed = parse_qs(raw_body.decode())
@@ -144,14 +121,6 @@ async def handle_interaction(request: Request, background_tasks: BackgroundTasks
         # Prefer Slack state.values; if the picker was never touched, use a
         # fresh now+1h default (see _extract_datetimepicker_value docstring).
         selected_ts = _extract_datetimepicker_value(payload, item_id)
-        if not selected_ts:
-            background_tasks.add_task(
-                _handle_schedule_error, channel, message.get("ts"),
-                message.get("blocks"),
-                ":x: No time selected. Pick a time below, then Confirm.",
-                item_id,
-            )
-            return {"ok": True}
         background_tasks.add_task(
             _handle_publish_schedule, item_id, selected_ts,
             channel, message.get("ts"), message.get("blocks"),
@@ -237,6 +206,10 @@ def _handle_onboarding_action(action_id, brand_id, channel, thread_ts):
     if not session:
         return
 
+    # Each action claims the session status atomically (same pattern as
+    # content publish claims) so a double-click or Slack retry can't run the
+    # slow side effects (brand upsert, Claude synthesis) twice. The losing
+    # click returns silently — the winning click reports the outcome.
     if action_id == "onboard_approve":
         if not session.get("draft_voice_md") or not session.get("draft_config"):
             post_message(
@@ -245,9 +218,23 @@ def _handle_onboarding_action(action_id, brand_id, channel, thread_ts):
                 thread_ts=thread_ts,
             )
             return
-        db.upsert_brand(brand_id, session["draft_config"], session["draft_voice_md"])
-        db.set_onboarding_status(brand_id, "approved")
-        db.set_onboarding_phase(brand_id, "done")
+        if not db.claim_onboarding_status(
+            brand_id, "approved", ("in_progress", "rejected")
+        ):
+            return
+        try:
+            db.upsert_brand(
+                brand_id, session["draft_config"], session["draft_voice_md"]
+            )
+            db.set_onboarding_phase(brand_id, "done")
+        except Exception as exc:
+            db.set_onboarding_status(brand_id, "in_progress")
+            post_message(
+                channel,
+                text=f"Approve failed: {exc}. Click Approve again to retry.",
+                thread_ts=thread_ts,
+            )
+            return
         post_message(
             channel,
             text=(
@@ -259,7 +246,8 @@ def _handle_onboarding_action(action_id, brand_id, channel, thread_ts):
         return
 
     if action_id == "onboard_reject":
-        db.set_onboarding_status(brand_id, "rejected")
+        if not db.claim_onboarding_status(brand_id, "rejected", "in_progress"):
+            return
         post_message(
             channel,
             text="Rejected. Reply in this thread with what to change, then click Regenerate.",
@@ -268,6 +256,11 @@ def _handle_onboarding_action(action_id, brand_id, channel, thread_ts):
         return
 
     if action_id == "onboard_regenerate":
+        prev_status = session.get("status") or "in_progress"
+        if not db.claim_onboarding_status(
+            brand_id, "regenerating", ("in_progress", "rejected")
+        ):
+            return
         try:
             # session was re-read at handler entry, so answers includes any
             # revision_feedback replies captured after a reject.
@@ -287,6 +280,9 @@ def _handle_onboarding_action(action_id, brand_id, channel, thread_ts):
                 text=f"Regenerated draft for {session['display_name']}",
             )
         except Exception as exc:
+            # Restore the pre-claim status so thread replies keep working
+            # (rejected sessions keep collecting revision feedback).
+            db.set_onboarding_status(brand_id, prev_status)
             post_message(
                 channel,
                 text=f"Regeneration failed: {exc}",
@@ -347,6 +343,35 @@ def _handle_generate_image(item_id, channel, message_ts, original_blocks):
         image_url, prompt, model_used = image_generator.generate_and_save(
             brand, item["platform"], item["draft_text"], item_id,
         )
+    except image_generator.TemplateNotFound:
+        display = brand.get("display_name") or item["brand"]
+        note = (
+            f":warning: *{display}* has no design system yet "
+            "(no template.svg), so image generation isn't available "
+            "for this brand. The draft is untouched — approve or "
+            "publish it as text."
+        )
+        # Keep the original blocks (including the action buttons) so the
+        # draft stays actionable; just append the explanation. Drop any
+        # copy of the note from a previous click so it doesn't stack.
+        def _is_note(block):
+            if block.get("type") != "context":
+                return False
+            elements = block.get("elements") or []
+            return bool(elements) and elements[0].get("text") == note
+
+        blocks = [b for b in (original_blocks or []) if not _is_note(b)]
+        blocks.append(
+            {
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": note}],
+            }
+        )
+        try:
+            update_message(channel, message_ts, blocks=blocks)
+        except Exception:
+            pass
+        return
     except Exception as exc:
         try:
             update_message(
@@ -376,14 +401,26 @@ def _handle_generate_image(item_id, channel, message_ts, original_blocks):
     db.update_content_image(item_id, image_url, prompt, model_used)
 
     try:
-        new_blocks = format_draft_with_image_blocks(
-            original_blocks,
-            item["draft_text"],
-            brand.get("display_name") or item["brand"],
-            item["platform"],
-            item_id,
-            image_url,
-        )
+        if item["status"] == "pending_approval":
+            # Draft still awaiting approval: rebuild with Approve/Reject.
+            new_blocks = format_draft_with_image_blocks(
+                original_blocks,
+                item["draft_text"],
+                brand.get("display_name") or item["brand"],
+                item["platform"],
+                item_id,
+                image_url,
+            )
+        else:
+            # Already approved/scheduled/needs_review (e.g. regen from a
+            # queue-open message): keep the Publish/Schedule/Delete actions
+            # instead of resurrecting Approve/Reject buttons.
+            updated_item = dict(item)
+            updated_item["image_url"] = image_url
+            updated_item["display_name"] = (
+                brand.get("display_name") or item["brand"]
+            )
+            new_blocks = format_approved_action_blocks(updated_item)
         update_message(channel, message_ts, blocks=new_blocks)
     except Exception as exc:
         post_message(
@@ -415,19 +452,11 @@ def _handle_onboard_from_picker(brand_id, channel, thread_ts):
 
     display_name = brand.get("display_name") or brand_id
     try:
-        new_thread_ts = _onboarding.start_session(brand_id, display_name, channel)
+        _onboarding.start_session(brand_id, display_name, channel)
     except Exception as exc:
         post_message(
             channel,
             text=f"Could not start onboarding for {display_name}: {exc}",
-            thread_ts=thread_ts,
-        )
-        return
-
-    if not new_thread_ts:
-        post_message(
-            channel,
-            text=f"Could not start onboarding for {display_name} (Slack post failed).",
             thread_ts=thread_ts,
         )
         return
@@ -531,24 +560,21 @@ def _handle_show_schedule_picker(item_id, channel, message_ts, original_blocks):
 
 
 def _handle_schedule_error(channel, message_ts, original_blocks, status_text,
-                            item_id=None):
+                            item_id):
     """Background task: show a schedule error, keeping Schedule recoverable.
 
-    Prefer re-showing the picker (with a context error line) so the user can
-    retry without hunting for the original Approve message.
+    Re-shows the picker (with a context error line) so the user can retry
+    without hunting for the original Approve message.
     """
-    if item_id is not None:
-        blocks = format_schedule_picker_blocks(item_id, original_blocks)
-        # Insert error context above the picker actions
-        blocks.insert(
-            -1,
-            {
-                "type": "context",
-                "elements": [{"type": "mrkdwn", "text": status_text}],
-            },
-        )
-    else:
-        blocks = format_publish_result_blocks(original_blocks, status_text)
+    blocks = format_schedule_picker_blocks(item_id, original_blocks)
+    # Insert error context above the picker actions
+    blocks.insert(
+        -1,
+        {
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": status_text}],
+        },
+    )
     try:
         update_message(channel, message_ts, blocks=blocks)
     except Exception:
@@ -713,14 +739,9 @@ def _handle_delete_item(item_id, user_id, channel, message_ts, original_blocks):
 def _meta_credentials_for_item(item):
     """Resolve (page_id, token) for an item's brand, or (None, error_msg)."""
     from core import meta_publisher
-    from core.brand_loader import get_brand_by_id
 
-    brand_id = item.get("brand")
-    brand = get_brand_by_id(brand_id) if brand_id else None
-    if not brand:
-        return None, f"Unknown or inactive brand '{brand_id}' — cannot publish."
     try:
-        return meta_publisher.resolve_for_brand(brand), None
+        return meta_publisher.resolve_for_item(item), None
     except RuntimeError as exc:
         return None, str(exc)
 
@@ -764,8 +785,12 @@ def _handle_publish_now(item_id, channel, message_ts, original_blocks):
 
     # Atomically claim the item (approved -> publishing) so a double-click or
     # duplicate Slack retry cannot both proceed to call the Meta Graph API
-    # for the same item and create two live posts.
-    if not db.claim_item_status(item_id, "publishing", expected_status="approved"):
+    # for the same item and create two live posts. needs_review items (stuck
+    # publishes recovered by the cron sweep) may be re-published after the
+    # operator has checked the Facebook page.
+    if not db.claim_item_status(
+        item_id, "publishing", expected_status=("approved", "needs_review")
+    ):
         update_message(
             channel, message_ts,
             blocks=format_publish_result_blocks(
@@ -874,8 +899,12 @@ def _handle_publish_schedule(item_id, selected_ts, channel, message_ts,
 
     # Atomically claim the item (approved -> scheduling) so a double-click or
     # duplicate Slack retry cannot both proceed to call the Meta Graph API
-    # for the same item and create two scheduled posts.
-    if not db.claim_item_status(item_id, "scheduling", expected_status="approved"):
+    # for the same item and create two scheduled posts. needs_review items
+    # (stuck publishes recovered by the cron sweep) may be re-scheduled after
+    # the operator has checked the Facebook page.
+    if not db.claim_item_status(
+        item_id, "scheduling", expected_status=("approved", "needs_review")
+    ):
         update_message(
             channel, message_ts,
             blocks=format_publish_result_blocks(

@@ -18,6 +18,30 @@ from core.slack_client import post_for_approval
 LOOP_LOCK_KEY = 913522041
 
 
+def try_with_loop_lock(fn):
+    """Run fn() while holding the content-loop advisory lock.
+
+    Returns (True, fn()) if the lock was acquired, or (False, None) if
+    another generation run currently holds it. Both the cron loop and the
+    interactive Slack flow acquire this lock, so overlapping runs can't
+    generate duplicate drafts for the same brand/platform.
+    """
+    lock_conn = get_conn()
+    try:
+        with lock_conn.cursor() as cur:
+            cur.execute("SELECT pg_try_advisory_lock(%s)", (LOOP_LOCK_KEY,))
+            acquired = cur.fetchone()[0]
+        if not acquired:
+            return False, None
+        try:
+            return True, fn()
+        finally:
+            with lock_conn.cursor() as cur:
+                cur.execute("SELECT pg_advisory_unlock(%s)", (LOOP_LOCK_KEY,))
+    finally:
+        lock_conn.close()
+
+
 def generate_for_platforms(brand, platforms):
     """Generate drafts for one brand on the given platforms.
 
@@ -31,6 +55,7 @@ def generate_for_platforms(brand, platforms):
     for platform in platforms:
         if platform not in brand_platforms:
             continue
+        item_id = None
         try:
             draft_text = generate_draft(brand, platform)
             item_id = save_draft(brand["brand_id"], platform, draft_text)
@@ -52,6 +77,18 @@ def generate_for_platforms(brand, platforms):
                 file=sys.stderr,
             )
             traceback.print_exc(file=sys.stderr)
+            if item_id is not None:
+                # The row was inserted as pending_approval but never reached
+                # Slack. Left alone it would block the brand's cadence forever
+                # (has_pending_backlog) with no visible message to act on, so
+                # park it as a terminal error instead.
+                try:
+                    update_status(item_id, "error")
+                except Exception:
+                    print(
+                        f"[content_loop] could not mark item {item_id} as error",
+                        file=sys.stderr,
+                    )
             results.append(
                 {
                     "brand": brand["brand_id"],
@@ -77,19 +114,10 @@ def run_content_loop():
     - Brands with a pending_approval backlog are skipped until the human
       clears the queue.
     """
-    lock_conn = get_conn()
-    try:
-        with lock_conn.cursor() as cur:
-            cur.execute("SELECT pg_try_advisory_lock(%s)", (LOOP_LOCK_KEY,))
-            if not cur.fetchone()[0]:
-                return [{"skipped": "content loop already running"}]
-        return _run_content_loop_locked()
-    finally:
-        try:
-            with lock_conn.cursor() as cur:
-                cur.execute("SELECT pg_advisory_unlock(%s)", (LOOP_LOCK_KEY,))
-        finally:
-            lock_conn.close()
+    acquired, results = try_with_loop_lock(_run_content_loop_locked)
+    if not acquired:
+        return [{"skipped": "content loop already running"}]
+    return results
 
 
 def _run_content_loop_locked():

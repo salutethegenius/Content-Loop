@@ -296,7 +296,25 @@ def format_approved_action_blocks(item):
                 "action_id": "gen_image",
             }
         )
-    if platform == "facebook" and item.get("status") == "approved":
+    if platform == "facebook" and item.get("status") in ("approved", "needs_review"):
+        if item.get("status") == "needs_review":
+            blocks.append(
+                {
+                    "type": "context",
+                    "elements": [
+                        {
+                            "type": "mrkdwn",
+                            "text": (
+                                ":warning: This post was stuck mid-publish and "
+                                "recovered. Check the Facebook page before "
+                                "publishing again — the original attempt may "
+                                "have gone through. If it's live, Delete this "
+                                "item instead."
+                            ),
+                        }
+                    ],
+                }
+            )
         actions.append(
             {
                 "type": "button",

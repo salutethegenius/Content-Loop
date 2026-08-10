@@ -1,5 +1,4 @@
 import os
-from datetime import datetime, timezone
 
 import psycopg2
 
@@ -72,6 +71,9 @@ def update_status(
 def claim_item_status(item_id, new_status, expected_status="approved"):
     """Atomically transition item_id from expected_status to new_status.
 
+    `expected_status` may be a single status string or a tuple/list of
+    acceptable current statuses (e.g. ('approved', 'needs_review')).
+
     Uses a single conditional UPDATE so two concurrent requests (e.g. a
     double-click on "Publish now") cannot both proceed to call the Meta
     Graph API for the same item. Returns True if this caller won the race
@@ -83,6 +85,10 @@ def claim_item_status(item_id, new_status, expected_status="approved"):
     the cron sweep can recover items orphaned by a mid-publish crash, and
     approved_at when the transition is an approval.
     """
+    if isinstance(expected_status, str):
+        expected = [expected_status]
+    else:
+        expected = list(expected_status)
     conn = get_conn()
     try:
         with conn.cursor() as cur:
@@ -94,10 +100,10 @@ def claim_item_status(item_id, new_status, expected_status="approved"):
                                          THEN now() ELSE claimed_at END,
                        approved_at = CASE WHEN %s = 'approved'
                                           THEN now() ELSE approved_at END
-                 WHERE id = %s AND status = %s
+                 WHERE id = %s AND status = ANY(%s)
                 RETURNING id
                 """,
-                (new_status, new_status, new_status, item_id, expected_status),
+                (new_status, new_status, new_status, item_id, expected),
             )
             row = cur.fetchone()
             conn.commit()
@@ -107,14 +113,17 @@ def claim_item_status(item_id, new_status, expected_status="approved"):
 
 
 def recover_stuck_claims(max_age_minutes=15):
-    """Revert items stuck in publishing/scheduling back to approved.
+    """Park items stuck in publishing/scheduling as needs_review.
 
     A crash between claim_item_status and the final update_status leaves an
-    item invisible in the queue with no retry path. The cron sweep calls this;
-    recovered items need a human to check the Facebook page before retrying,
-    because the Meta call may have succeeded before the crash.
+    item invisible in the queue with no retry path. The cron sweep calls this.
+    Recovered items are NOT auto-retried: the original Meta call may have
+    succeeded right before the crash, so a blind retry could create a
+    duplicate Facebook post. A human must check the Facebook page, then
+    either publish the item again (the queue allows publishing from
+    needs_review) or delete it.
 
-    Returns the recovered rows as [{id, brand, status_was}].
+    Returns the recovered rows as [{id, brand}].
     """
     conn = get_conn()
     try:
@@ -122,17 +131,17 @@ def recover_stuck_claims(max_age_minutes=15):
             cur.execute(
                 """
                 UPDATE content_items
-                   SET status = 'approved'
+                   SET status = 'needs_review'
                  WHERE status IN ('publishing', 'scheduling')
                    AND claimed_at IS NOT NULL
                    AND claimed_at < now() - make_interval(mins => %s)
-                RETURNING id, brand, claimed_at
+                RETURNING id, brand
                 """,
                 (max_age_minutes,),
             )
             rows = cur.fetchall()
             conn.commit()
-            return [{"id": r[0], "brand": r[1], "claimed_at": r[2]} for r in rows]
+            return [{"id": r[0], "brand": r[1]} for r in rows]
     finally:
         conn.close()
 
@@ -205,7 +214,10 @@ def get_content_item(item_id):
         conn.close()
 
 
-DELETABLE_STATUSES = ("pending_approval", "approved", "rejected", "scheduled")
+DELETABLE_STATUSES = (
+    "pending_approval", "approved", "rejected", "scheduled", "needs_review",
+    "error",
+)
 
 
 def delete_content_item(item_id):
@@ -276,29 +288,13 @@ def has_pending_backlog(brand_id):
         conn.close()
 
 
-def get_last_posted(brand_id):
-    """Return the most recent posted_at for a brand, or None if never posted."""
-    conn = get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT max(posted_at)
-                  FROM content_items
-                 WHERE brand = %s
-                   AND status = 'posted'
-                """,
-                (brand_id,),
-            )
-            row = cur.fetchone()
-            return row[0] if row else None
-    finally:
-        conn.close()
-
-
-
 def list_actionable_items(limit=20):
-    """Return approved + scheduled items, newest approved_at first.
+    """Return approved + scheduled + needs_review items, newest approved_at
+    first.
+
+    needs_review items were stuck mid-publish and recovered by the cron
+    sweep; they surface in the queue so the operator can check the Facebook
+    page, then publish again or delete.
 
     Joins brands for display_name when available; falls back to brand_id.
     """
@@ -312,7 +308,7 @@ def list_actionable_items(limit=20):
                        COALESCE(b.config->>'display_name', c.brand) AS display_name
                   FROM content_items c
                   LEFT JOIN brands b ON b.brand_id = c.brand
-                 WHERE c.status IN ('approved', 'scheduled')
+                 WHERE c.status IN ('approved', 'scheduled', 'needs_review')
                  ORDER BY c.approved_at DESC NULLS LAST, c.id DESC
                  LIMIT %s
                 """,
@@ -453,37 +449,44 @@ def create_onboarding_session(brand_id, display_name, channel, thread_ts):
         conn.close()
 
 
+_ONBOARDING_SESSION_COLUMNS = """
+    SELECT id, brand_id, display_name, channel, thread_ts,
+           phase, answers, draft_voice_md, draft_config, status
+      FROM onboarding_sessions
+"""
+
+
+def _onboarding_row_to_dict(row):
+    """Hydrate an onboarding_sessions row (selected with
+    _ONBOARDING_SESSION_COLUMNS) into a dict, coercing JSONB values that
+    psycopg2 may hand back as strings."""
+    import json
+
+    return {
+        "id": row[0],
+        "brand_id": row[1],
+        "display_name": row[2],
+        "channel": row[3],
+        "thread_ts": row[4],
+        "phase": row[5],
+        "answers": row[6] if isinstance(row[6], dict) else json.loads(row[6] or "{}"),
+        "draft_voice_md": row[7],
+        "draft_config": row[8] if isinstance(row[8], dict) else (json.loads(row[8]) if row[8] else None),
+        "status": row[9],
+    }
+
+
 def get_onboarding_session_by_thread(thread_ts):
     """Return the onboarding session for a Slack thread, or None."""
     conn = get_conn()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                """
-                SELECT id, brand_id, display_name, channel, thread_ts,
-                       phase, answers, draft_voice_md, draft_config, status
-                  FROM onboarding_sessions
-                 WHERE thread_ts = %s
-                """,
+                _ONBOARDING_SESSION_COLUMNS + "WHERE thread_ts = %s",
                 (thread_ts,),
             )
             row = cur.fetchone()
-            if not row:
-                return None
-            import json
-
-            return {
-                "id": row[0],
-                "brand_id": row[1],
-                "display_name": row[2],
-                "channel": row[3],
-                "thread_ts": row[4],
-                "phase": row[5],
-                "answers": row[6] if isinstance(row[6], dict) else json.loads(row[6] or "{}"),
-                "draft_voice_md": row[7],
-                "draft_config": row[8] if isinstance(row[8], dict) else (json.loads(row[8]) if row[8] else None),
-                "status": row[9],
-            }
+            return _onboarding_row_to_dict(row) if row else None
     finally:
         conn.close()
 
@@ -494,31 +497,11 @@ def get_onboarding_session(brand_id):
     try:
         with conn.cursor() as cur:
             cur.execute(
-                """
-                SELECT id, brand_id, display_name, channel, thread_ts,
-                       phase, answers, draft_voice_md, draft_config, status
-                  FROM onboarding_sessions
-                 WHERE brand_id = %s
-                """,
+                _ONBOARDING_SESSION_COLUMNS + "WHERE brand_id = %s",
                 (brand_id,),
             )
             row = cur.fetchone()
-            if not row:
-                return None
-            import json
-
-            return {
-                "id": row[0],
-                "brand_id": row[1],
-                "display_name": row[2],
-                "channel": row[3],
-                "thread_ts": row[4],
-                "phase": row[5],
-                "answers": row[6] if isinstance(row[6], dict) else json.loads(row[6] or "{}"),
-                "draft_voice_md": row[7],
-                "draft_config": row[8] if isinstance(row[8], dict) else (json.loads(row[8]) if row[8] else None),
-                "status": row[9],
-            }
+            return _onboarding_row_to_dict(row) if row else None
     finally:
         conn.close()
 
@@ -599,5 +582,36 @@ def set_onboarding_status(brand_id, status):
                 (status, brand_id),
             )
             conn.commit()
+    finally:
+        conn.close()
+
+
+def claim_onboarding_status(brand_id, new_status, expected_status):
+    """Atomically transition an onboarding session's status.
+
+    Same claim pattern as claim_item_status: a single conditional UPDATE so
+    a double-clicked Approve/Reject/Regenerate button cannot run its slow
+    side effects (brand upsert, Claude synthesis) twice. `expected_status`
+    may be a string or a tuple/list. Returns True if this caller won.
+    """
+    if isinstance(expected_status, str):
+        expected = [expected_status]
+    else:
+        expected = list(expected_status)
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE onboarding_sessions
+                   SET status = %s, updated_at = now()
+                 WHERE brand_id = %s AND status = ANY(%s)
+                RETURNING id
+                """,
+                (new_status, brand_id, expected),
+            )
+            row = cur.fetchone()
+            conn.commit()
+            return row is not None
     finally:
         conn.close()

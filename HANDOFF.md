@@ -16,9 +16,9 @@ Brand-agnostic content loop. FastAPI on Railway, Postgres on Railway, Slack appr
 Three capabilities are live:
 1. **Interactive generation** — admin hits `/generate/start`, Nova posts a Slack brand picker → platform picker → generates targeted drafts. Preferred manual path.
 2. **Content loop (cron)** — cron hits `/cron/generate`, generates drafts for all due active brand/platform pairs. Blanket scheduled fallback; respects cadence.
-3. **Nova onboarding** — admin hits `/onboard/start`, Nova opens a Slack thread and walks a business through a 6-phase interview, synthesizes `voice.md` + `config.json` via Claude, posts the draft with Approve/Reject/Regenerate buttons. Approve persists the brand to the `brands` table and it is immediately live (no file write, no redeploy).
+3. **Nova onboarding** — admin hits `/onboard/start`, Nova opens a Slack thread and walks a business through a 7-phase interview, synthesizes `voice.md` + `config.json` via Claude, posts the draft with Approve/Reject/Regenerate buttons. Approve persists the brand to the `brands` table and it is immediately live (no file write, no redeploy).
 
-V1 approval flow: drafts land in Slack with Approve/Reject buttons. On click, the message updates in place (buttons removed, status shown) and `content_items.status` is set to `approved` or `rejected`. Kenneth posts approved copy manually. No Meta publishing, no image generation yet.
+Approval flow: drafts land in Slack with Approve/Reject buttons. On click, the message updates in place (buttons removed, status shown) and `content_items.status` is set to `approved` or `rejected`. Approved Facebook drafts get Publish now / Schedule buttons (Meta Graph API, per-brand pages — §14/§18), and an optional Generate image button runs the design-system pipeline (§17). Non-Facebook platforms are posted manually.
 
 ---
 
@@ -26,13 +26,15 @@ V1 approval flow: drafts land in Slack with Approve/Reject buttons. On click, th
 
 ```
 /app/main.py                      FastAPI app, sys.path shim for `from core/` imports
-/app/brands/{kgc,biccu,drewber}/  filesystem seed brands (config.json + voice.md)
+/app/brands/{biccu,kgc,drewber,lawbey,kemispay,kemisdigital,kemisemail,bahamas_open_data}/
+                                  filesystem seed brands (config.json + voice.md;
+                                  biccu/kgc also ship template.svg + illustrations/)
 /app/core/brand_loader.py         get_active_brands / get_brand_by_id / load_voice / is_due_for_post
 /app/core/content_loop.py         shared generate-for-platforms + blanket cron loop
 /app/core/generation_flow.py      interactive Slack brand/platform picker + handlers
 /app/core/db.py                   psycopg2 helpers: content_items, brands, onboarding_sessions
 /app/core/generator.py            Claude draft generation, pillar-based topic selection, Facebook support
-/app/core/onboarding.py           6-phase interview script + Claude synthesis of voice/config
+/app/core/onboarding.py           7-phase interview script + Claude synthesis of voice/config
 /app/core/slack_client.py         post_for_approval, post_message, format_resolved_approval_blocks
 /app/routes/cron.py               POST /cron/generate (X-Cron-Secret gated)
 /app/routes/generate.py           POST /generate/start (X-Cron-Secret gated)
@@ -134,7 +136,7 @@ Slack rejects block messages where two buttons share the same `action_id` (`inva
 ## 7. What is done and verified live
 
 ### Item 1 — Nova Slack onboarding flow: COMPLETE
-- 6-phase interview: identity → voice → content territory → compliance → platform behavior → cadence.
+- 7-phase interview: identity → voice → content territory → compliance → platform behavior → cadence → visual identity.
 - Human replies in thread; types `next` to advance. Nova accumulates replies per phase in `onboarding_sessions.answers` (JSONB).
 - After Phase 6 + `next`, Claude synthesizes `voice.md` + `config.json` (with `content_pillars` array) and posts the draft with Approve/Reject/Regenerate buttons.
 - Approve → `db.upsert_brand()` → row in `brands` table → immediately live in `get_active_brands()`.
@@ -165,13 +167,18 @@ Slack rejects block messages where two buttons share the same `action_id` (`inva
 
 ## 8. Current brand state
 
-| brand_id | display_name | source | platforms | has_pillars | notes |
-| --- | --- | --- | --- | --- | --- |
-| `biccu` | BICCU | DB (onboarded) | facebook, instagram, linkedin | yes, 7 | credit union, cadence 2 days, fully onboarded via Nova |
-| `drewber` | Drewber Solutions | filesystem seed | facebook, instagram | no | not yet onboarded (picker now prompts to onboard — see section 16) |
-| `kgc` | Kemis Group of Companies | filesystem seed | facebook, instagram | no | not yet onboarded (picker now prompts to onboard — see section 16) |
+| brand_id | display_name | source | platforms | has_pillars | template.svg | notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| `biccu` | BICCU | DB (onboarded) | facebook, instagram, linkedin | yes, 7 | yes | credit union, cadence 2 days, fully onboarded via Nova |
+| `kgc` | The Kemis Group | filesystem seed | facebook, instagram | no | yes | KGC design system + footer shipped; onboard for pillars |
+| `drewber` | Drewber Solutions | filesystem seed | facebook, instagram | no | no | not yet onboarded (picker prompts to onboard — §16) |
+| `lawbey` | Lawbey | filesystem seed | facebook, instagram | no | no | stub voice.md — onboard before real use |
+| `kemispay` | KemisPay | filesystem seed | facebook, instagram | no | no | stub voice.md — onboard before real use |
+| `kemisdigital` | Kemis Digital | filesystem seed | facebook, instagram | no | no | full voice.md + visual_identity seed |
+| `kemisemail` | Kemis Email | filesystem seed | facebook, instagram | no | no | full voice.md + visual_identity seed |
+| `bahamas_open_data` | Bahamas Open Data | filesystem seed | facebook, instagram | no | no | stub voice.md — onboard before real use |
 
-Drewber and KGC still need to be onboarded through Nova before they generate on-voice, pillar-anchored drafts. Run `/nova` in Slack → click the brand → **Onboard now** (new as of 1.5.0), or hit `/onboard/start` with the right `brand_id` and channel.
+Seed brands still need to be onboarded through Nova before they generate on-voice, pillar-anchored drafts. Run `/nova` in Slack → click the brand → **Onboard now** (new as of 1.5.0), or hit `/onboard/start` with the right `brand_id` and channel. Each brand also needs its `META_*_PAGE_ACCESS_TOKEN` env var set on Railway before Facebook publishing works (see `.env.example`).
 
 ### 8.1 Adding a new brand — three options
 
@@ -185,7 +192,7 @@ None of these require a code change to `core/` or `routes/`. Brands are plug-ins
     -d '{"brand_id":"acme","display_name":"Acme Co","channel":"C0BF8QKP0PL"}' \
     https://nova-production-14f6.up.railway.app/onboard/start
   ```
-  Nova opens a thread in `#nova-agent`, walks the 6 phases, Claude synthesizes voice.md + config.json (with `content_pillars`), you Approve → row lands in `brands` → immediately live.
+  Nova opens a thread in `#nova-agent`, walks the 7 phases, Claude synthesizes voice.md + config.json (with `content_pillars`), you Approve → row lands in `brands` → immediately live.
 
 **Option B — Drop a filesystem seed folder** (so the brand shows up in the `/nova` picker):
 - Create `app/brands/{brand_id}/config.json`:
@@ -312,7 +319,7 @@ Kenneth's ask: Nova should ask who to generate for and which platforms, instead 
 
 ## 12. NEXT STEP — V2.1 (not built yet)
 
-- **Image generation** — `generator.generate_image` is a stub returning `None`. Wire via Auto mode across Grok, Gemini, ChatGPT when ready. **Next session.**
+- ~~**Image generation**~~ — **DONE** (V1.7 design-system pipeline, §17): Claude slot-fill + fixed SVG template + cairosvg. Lives in `image_generator.generate_and_save`, triggered by the Slack Generate image button. Only biccu/kgc have templates; other brands get a friendly "no design system yet" message.
 - Instagram publishing — 2-step Graph flow (`POST /{ig-user-id}/media` then `POST /{ig-user-id}/media_publish`). Needs the IG business account id linked to the BICCU page. Deferred from V2.
 - LinkedIn publishing — deferred from V2.
 - ~~Per-brand `meta_page_id`~~ — **DONE** (section 18). Instagram / LinkedIn still deferred.
@@ -322,7 +329,7 @@ Kenneth's ask: Nova should ask who to generate for and which platforms, instead 
 ## 13. Known small issues / polish for later
 
 - The `content_items` table has no `pillar` column — currently you cannot tell which pillar a draft was anchored to. Consider adding `pillar TEXT` to `content_items` and having `save_draft` record it, for analytics/content planning.
-- `onboarding_sessions.answers` accumulates raw message text per phase; if a human posts many messages, the synthesis prompt grows. Fine for now (6 phases, modest volume), but worth a length guard eventually.
+- `onboarding_sessions.answers` accumulates raw message text per phase; if a human posts many messages, the synthesis prompt grows. Fine for now (7 phases, modest volume), but worth a length guard eventually.
 - No per-session lock — two rapid replies in the same onboarding thread could race. Low risk at current volume. (Reliability pass 2026-07-13 fixed the bigger onboarding bug — see §19 revision loop.)
 - `append_onboarding_answer` uses `answers || jsonb_build_object(...)` which is safe but worth noting if answers ever get nested.
 - Onboarding Phase 6 still asks cadence "per platform" in prose but config stores a single `posting_cadence_days` — fine for V1, may need per-platform cadence later.
@@ -555,7 +562,7 @@ app/brands/biccu/illustrations/*.svg      8 hand-coded <g> groups (piggy_bank,
 app/brands/biccu/config.json              + design block (template path,
                                           illustrations_dir, default_illustration)
 app/core/design_loader.py                 load_template, list_illustrations,
-                                          load_illustration, get_footer_data
+                                          get_footer_data
 app/core/image_generator.py               rewritten: build_slot_prompt,
                                           generate_slots, compose_svg,
                                           generate_and_save orchestrates

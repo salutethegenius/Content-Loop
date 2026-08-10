@@ -22,6 +22,18 @@ def _brand_dir(brand_id):
     return os.path.join(BRANDS_DIR, brand_id)
 
 
+def _resolve_inside_brand(brand_id, relative_path):
+    """Join a config-supplied relative path to the brand dir, refusing
+    absolute paths or ../ traversal that would escape it. Design paths come
+    from brand configs (including onboarding output), so they are not
+    trusted blindly. Returns the absolute path, or None if it escapes."""
+    base = os.path.abspath(_brand_dir(brand_id))
+    path = os.path.abspath(os.path.join(base, relative_path))
+    if path != base and not path.startswith(base + os.sep):
+        return None
+    return path
+
+
 def get_design_config(brand_config):
     """Return the brand's `design` block with defaults applied."""
     design = (brand_config.get("design") or {}).copy() if brand_config else {}
@@ -36,8 +48,8 @@ def load_template(brand_id, brand_config=None):
     template file exists (the caller can decide whether to error or fall back
     to a legacy generation path)."""
     design = get_design_config(brand_config or {})
-    path = os.path.join(_brand_dir(brand_id), design["template"])
-    if not os.path.isfile(path):
+    path = _resolve_inside_brand(brand_id, design["template"])
+    if not path or not os.path.isfile(path):
         return None
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
@@ -49,8 +61,8 @@ def list_illustrations(brand_id, brand_config=None):
     Returns {} if the dir is missing.
     """
     design = get_design_config(brand_config or {})
-    illustrations_dir = os.path.join(_brand_dir(brand_id), design["illustrations_dir"])
-    if not os.path.isdir(illustrations_dir):
+    illustrations_dir = _resolve_inside_brand(brand_id, design["illustrations_dir"])
+    if not illustrations_dir or not os.path.isdir(illustrations_dir):
         return {}
     out = {}
     for fname in sorted(os.listdir(illustrations_dir)):
@@ -60,12 +72,6 @@ def list_illustrations(brand_id, brand_config=None):
         with open(os.path.join(illustrations_dir, fname), "r", encoding="utf-8") as f:
             out[illustration_id] = f.read()
     return out
-
-
-def load_illustration(brand_id, illustration_id, brand_config=None):
-    """Return one illustration's SVG string by id, or None if missing."""
-    illustrations = list_illustrations(brand_id, brand_config)
-    return illustrations.get(illustration_id)
 
 
 def get_footer_data(brand_config):

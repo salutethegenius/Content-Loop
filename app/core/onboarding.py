@@ -1,9 +1,9 @@
 """Nova onboarding engine.
 
-Walks a business through a Slack thread interview in six phases, then
+Walks a business through a Slack thread interview in seven phases, then
 synthesizes a voice.md + config.json via Claude and posts it back with
-Approve/Edit/Reject buttons. On Approve, the brand is persisted to the
-`brands` table so the content loop can use it immediately.
+Approve/Reject/Regenerate buttons. On Approve, the brand is persisted to
+the `brands` table so the content loop can use it immediately.
 """
 
 import os
@@ -90,7 +90,7 @@ PHASES = [
             "Is there a day of week or time of day you prefer, or is cadence enough?",
             "Who approves drafts in Slack? Just you, or multiple people?",
             "What channel should drafts land in? Channel name or ID. Nova will use the ID.",
-            "Image style in one sentence, for when V2 image generation ships. (e.g. 'sovereign navy and gold, institutional, clean'.)",
+            "Image style in one sentence, used to steer generated images. (e.g. 'sovereign navy and gold, institutional, clean'.)",
             "Anything else Nova should know that has not come up yet?",
         ],
     ),
@@ -153,7 +153,8 @@ def start_session(brand_id, display_name, channel):
     phase 1 as the first threaded reply, and persists the session row so
     Slack Events replies in that thread drive the conversation forward.
 
-    Returns the new thread_ts (or None if the welcome post failed).
+    Returns the new thread_ts. Raises if the Slack post fails
+    (post_message raises on any non-ok Slack response).
     """
     welcome = (
         f"*Nova onboarding for {display_name}*\n"
@@ -163,8 +164,6 @@ def start_session(brand_id, display_name, channel):
         f"config.json for approval."
     )
     thread_ts = post_message(channel, text=welcome)
-    if not thread_ts:
-        return None
     phase_msg = format_phase_message(display_name, "identity")
     post_message(channel, text=phase_msg, thread_ts=thread_ts)
     db.create_onboarding_session(brand_id, display_name, channel, thread_ts)

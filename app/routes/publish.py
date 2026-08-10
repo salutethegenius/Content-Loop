@@ -1,5 +1,3 @@
-import os
-import secrets
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Header, HTTPException, Query
@@ -7,10 +5,9 @@ from pydantic import BaseModel, Field
 
 from core import db, meta_publisher
 from core.brand_loader import get_brand_by_id
+from routes.deps import require_cron_secret
 
 router = APIRouter()
-
-CRON_SECRET = os.environ.get("CRON_SECRET", "")
 
 
 class PublishRequest(BaseModel):
@@ -21,24 +18,10 @@ class PublishRequest(BaseModel):
     )
 
 
-def _check_cron_secret(x_cron_secret: str | None):
-    if not CRON_SECRET or not x_cron_secret or not secrets.compare_digest(
-        x_cron_secret, CRON_SECRET
-    ):
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-
 def _credentials_for_item(item):
     """Resolve Meta page_id + token from the item's brand. Raises HTTPException."""
-    brand_id = item.get("brand")
-    brand = get_brand_by_id(brand_id) if brand_id else None
-    if not brand:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unknown or inactive brand '{brand_id}' — cannot publish",
-        )
     try:
-        return meta_publisher.resolve_for_brand(brand)
+        return meta_publisher.resolve_for_item(item)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -55,7 +38,7 @@ def publish_item(
       - item_id (int, required)
       - scheduled_for (ISO 8601 str, optional) -> schedules instead of publishes
     """
-    _check_cron_secret(x_cron_secret)
+    require_cron_secret(x_cron_secret)
 
     item = db.get_content_item(body.item_id)
     if not item:
@@ -71,12 +54,20 @@ def publish_item(
     page_id, token = _credentials_for_item(item)
 
     # Atomically claim the item so a duplicate/retried request cannot call
-    # the Meta Graph API twice for the same item.
+    # the Meta Graph API twice for the same item. needs_review items (stuck
+    # publishes recovered by the cron sweep) may be re-published after the
+    # operator has checked the Facebook page.
     claim_status = "scheduling" if body.scheduled_for else "publishing"
-    if not db.claim_item_status(body.item_id, claim_status, expected_status="approved"):
+    if not db.claim_item_status(
+        body.item_id, claim_status,
+        expected_status=("approved", "needs_review"),
+    ):
         raise HTTPException(
             status_code=400,
-            detail=f"Item {body.item_id} status is '{item['status']}', must be 'approved'",
+            detail=(
+                f"Item {body.item_id} status is '{item['status']}', "
+                "must be 'approved' or 'needs_review'"
+            ),
         )
 
     if body.scheduled_for:
@@ -155,7 +146,7 @@ def verify_meta_token(
     """Sanity check the brand's Page Access Token against its meta_page_id.
     Returns the page name on success. Cron-secret gated so it's not a public
     token oracle. Pass ?brand_id=kgc to verify a non-default brand."""
-    _check_cron_secret(x_cron_secret)
+    require_cron_secret(x_cron_secret)
     brand = get_brand_by_id(brand_id)
     if not brand:
         raise HTTPException(

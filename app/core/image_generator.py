@@ -37,12 +37,16 @@ IMAGE_BASE_URL = os.environ.get("IMAGE_BASE_URL", "").rstrip("/")
 
 CANVAS_SIZE = 1080
 
+
+class TemplateNotFound(RuntimeError):
+    """The brand has no template.svg, so design-system image generation is
+    not available for it. Callers show a friendly "no design system yet"
+    message instead of a generic failure."""
+
 # Default palette (BICCU). Per-brand overrides come from
 # brand_config.visual_identity.colors when present.
 PRIMARY_BLUE = "#0079C8"
 DARK_NAVY = "#003C71"
-LIGHT_BLUE = "#47B8E8"
-ACCENT_ORANGE = "#F47A20"
 
 
 def _headline_palette(brand_config=None):
@@ -81,6 +85,8 @@ def build_slot_prompt(brand_config, platform, draft_text, available_illustration
     display_name = brand_config.get("display_name") or brand_config.get("brand_id")
     typography = vi.get("typography_style") or "geometric sans-serif, bold for headlines"
     avoid = vi.get("avoid") or []
+    style = (brand_config.get("image_style_prompt") or "").strip()
+    style_line = f"BRAND IMAGE STYLE: {style}\n" if style else ""
 
     illustrations_list = ", ".join(available_illustrations) if available_illustrations else "(none available)"
 
@@ -90,6 +96,7 @@ def build_slot_prompt(brand_config, platform, draft_text, available_illustration
         f"BRAND: {display_name}\n"
         f"PLATFORM: {platform}\n"
         f"TYPOGRAPHY STYLE: {typography}\n"
+        f"{style_line}"
         f"AVOID IN COPY: {', '.join(avoid) if avoid else 'hype words, jargon'}\n\n"
         f"DRAFT TEXT (the source material to distill, do not reuse verbatim):\n\"\"\"\n{draft_text}\n\"\"\"\n\n"
         f"AVAILABLE ILLUSTRATIONS: {illustrations_list}\n\n"
@@ -418,7 +425,7 @@ def generate_and_save(brand_config, platform, draft_text, item_id, model=None):
     brand_id = brand_config.get("brand_id", "brand")
     template_str = design_loader.load_template(brand_id, brand_config)
     if not template_str:
-        raise RuntimeError(
+        raise TemplateNotFound(
             f"No template.svg found for brand '{brand_id}'. "
             f"Expected at app/brands/{brand_id}/template.svg."
         )
