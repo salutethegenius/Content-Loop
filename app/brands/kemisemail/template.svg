@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1080" width="1080" height="1080" font-family="'Barlow Condensed', 'Arial Narrow', Arial, sans-serif">
+  <!-- ============================================================
+       KemisEMAIL design system - cream Swiss poster (1080x1080)
+       Tokens substituted by image_generator.compose_svg.
+
+       Palette:
+         Black   #0A0A0A   type, rules, dark frames
+         Cream   #F5F4F0   default ground
+         Orange  #FF4500   EMAIL, one headline accent
+         Blue    #0047FF   second accent (K-slab / one word)
+         Purple  #6200FF   third accent only (ticks, small squares)
+       ============================================================ -->
+
+  <!-- Cream ground -->
+  <rect width="1080" height="1080" fill="#F5F4F0"/>
+
+  <!-- Hairline geometry, empty right/top (quiet residue; illustration sits here too) -->
+  <line x1="820" y1="0" x2="1080" y2="320" stroke="#0A0A0A" stroke-width="1.5"/>
+  <rect x="980" y="48" width="36" height="36" fill="none" stroke="#0A0A0A" stroke-width="1.5"/>
+
+  <!-- ===================== LOGO ZONE (Signal K lockup, top-left) ===================== -->
+  <g id="logo" transform="translate(64, 44)">
+    <rect x="0" y="6" width="6" height="54" fill="#0A0A0A"/>
+    <polygon points="6,6 28,6 16,33 6,33" fill="#FF4500"/>
+    <polygon points="6,33 16,33 34,60 8,60" fill="#0047FF"/>
+    <rect x="38" y="6" width="5" height="5" fill="#6200FF" opacity="0.9"/>
+    <rect x="46" y="6" width="5" height="5" fill="#FF4500" opacity="0.5"/>
+    <rect x="54" y="6" width="5" height="5" fill="#0047FF" opacity="0.3"/>
+    <text x="68" y="50" font-family="'Barlow Condensed', 'Arial Narrow', Arial, sans-serif" font-weight="900" font-size="44" fill="#0A0A0A" letter-spacing="-1.2">KEMIS</text>
+    <text x="196" y="50" font-family="'Barlow Condensed', 'Arial Narrow', Arial, sans-serif" font-weight="900" font-size="44" fill="#FF4500" letter-spacing="-1.2">EMAIL</text>
+  </g>
+  <line x1="64" y1="118" x2="340" y2="118" stroke="#0A0A0A" stroke-width="1.5"/>
+
+  <!-- ===================== ILLUSTRATION ZONE (top-right residue) ===================== -->
+  <g id="illustration_zone" transform="translate(820, 180) scale(0.52)">
+    {{ILLUSTRATION_SVG}}
+  </g>
+
+  <!-- ===================== HEADLINE (left stack, tight leading) ===================== -->
+  <g id="headline">
+    <text x="64" y="{{HEADLINE_START_Y}}" font-family="'Barlow Condensed', 'Arial Narrow', Arial, sans-serif" font-size="{{HEADLINE_FONT_SIZE}}" font-weight="900" letter-spacing="{{HEADLINE_TRACKING}}" fill="{{HEADLINE_LINE_1_COLOR}}">
+      <tspan x="64" dy="0">{{HEADLINE_LINE_1}}</tspan>
+      <tspan x="64" dy="{{HEADLINE_LINE_HEIGHT}}" fill="{{HEADLINE_LINE_2_COLOR}}">{{HEADLINE_LINE_2}}</tspan>
+      <tspan x="64" dy="{{HEADLINE_LINE_HEIGHT}}" fill="{{HEADLINE_LINE_3_COLOR}}">{{HEADLINE_LINE_3}}</tspan>
+      <tspan x="64" dy="{{HEADLINE_LINE_HEIGHT}}" fill="{{HEADLINE_LINE_4_COLOR}}">{{HEADLINE_LINE_4}}</tspan>
+    </text>
+  </g>
+
+  <!-- ===================== LABEL (tiny uppercase; supporting slot) ===================== -->
+  <text x="64" y="{{SUPPORTING_PARA_Y}}" font-family="'Barlow Condensed', 'Arial Narrow', Arial, sans-serif" font-size="16" font-weight="800" letter-spacing="2.2" fill="#0A0A0A">
+    {{SUPPORTING_PARA_TSPANS}}
+  </text>
+
+  <!-- ===================== INFO / PROOF / TERMS (hairline frame, orange tick) =====================
+       Text injects at x=96 to match compose_svg info_card_text_x. -->
+  <g id="infoCard">
+    <rect x="64" y="820" width="640" height="88" fill="none" stroke="#0A0A0A" stroke-width="1.5"/>
+    <rect x="64" y="820" width="8" height="88" fill="#FF4500"/>
+    <text x="96" y="868" font-family="'DM Sans', Arial, Helvetica, sans-serif" font-size="16" font-weight="500" fill="#0A0A0A">
+      {{INFO_CARD_TSPANS}}
+    </text>
+  </g>
+
+  <!-- ===================== CTA (uppercase, no pill, no shadow) ===================== -->
+  <g id="cta">
+    <text x="64" y="948" font-family="'Barlow Condensed', 'Arial Narrow', Arial, sans-serif" font-size="{{CTA_FONT_SIZE}}" font-weight="800" letter-spacing="2" fill="#0A0A0A">
+      {{CTA_TSPANS}}
+    </text>
+  </g>
+
+  <!-- ===================== FOOTER (website over hashtag; no social, no phone) ===================== -->
+  <g id="footer">
+    <line x1="64" y1="1004" x2="1016" y2="1004" stroke="#0A0A0A" stroke-width="1.5"/>
+    <text x="64" y="1044" font-family="'Barlow Condensed', 'Arial Narrow', Arial, sans-serif" font-size="18" font-weight="800" letter-spacing="1.6" fill="#0A0A0A">{{FOOTER_WEBSITE}}</text>
+    <text x="1016" y="1044" font-family="'DM Sans', Arial, Helvetica, sans-serif" font-size="14" font-weight="400" fill="#0A0A0A" text-anchor="end">{{FOOTER_TAGLINE}}</text>
+  </g>
+</svg>

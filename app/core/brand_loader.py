@@ -41,6 +41,18 @@ def _merge_seed_fill(config):
         if empty and seed.get(key) not in (None, "", {}):
             merged[key] = seed[key]
 
+    # Design-system seeds own template fit params. Onboarding emits a stub
+    # `design` dict (so the empty-dict fill above never fires); overlay
+    # non-empty seed keys so a deploy can land headline metrics, fonts_dir,
+    # and default_illustration without a SQL patch.
+    seed_design = seed.get("design")
+    if isinstance(seed_design, dict) and seed_design:
+        design = dict(merged.get("design") or {})
+        for key, val in seed_design.items():
+            if val not in (None, "", {}):
+                design[key] = val
+        merged["design"] = design
+
     # Overlay visual_identity.colors from seed. Seed is the design-system
     # source of truth for headline palette (e.g. KGC cream-on-navy); fill
     # missing keys and let non-empty seed values refresh stale DB colors.
@@ -57,21 +69,31 @@ def _merge_seed_fill(config):
             if isinstance(val, str) and val.strip():
                 colors[key] = val.strip()
         vi["colors"] = colors
-        if not vi.get("wordmark_text") and seed_vi.get("wordmark_text"):
+        if seed_vi.get("wordmark_text"):
             vi["wordmark_text"] = seed_vi["wordmark_text"]
+        if seed_vi.get("typography_style"):
+            vi["typography_style"] = seed_vi["typography_style"]
+        if seed_vi.get("layout"):
+            vi["layout"] = seed_vi["layout"]
+        if seed_vi.get("avoid"):
+            vi["avoid"] = seed_vi["avoid"]
         merged["visual_identity"] = vi
+        # Design-system seeds that declare a layout own the image-style
+        # one-liner (same "deploy updates win" rule as colors).
+        if seed_vi.get("layout") and seed.get("image_style_prompt"):
+            merged["image_style_prompt"] = seed["image_style_prompt"]
 
-    # Fill empty footer fields from seed. Onboarding may create the footer
-    # dict with blank values (so the dict-level fill above never fires);
-    # per-field fill lets the seed supply website/phone/tagline without
-    # clobbering anything the DB already has.
+    # Footer scalars: non-empty seed values refresh the DB row so a deploy
+    # can correct onboarded website/phone/tagline without a SQL patch.
+    # Social handles still fill only when empty, so a blank seed cannot
+    # wipe handles another brand already published.
     seed_footer = seed.get("footer")
     if isinstance(seed_footer, dict) and seed_footer:
         footer = dict(merged.get("footer") or {})
         for key, val in seed_footer.items():
             if key == "social":
                 continue
-            if not footer.get(key) and isinstance(val, str) and val.strip():
+            if isinstance(val, str) and val.strip():
                 footer[key] = val.strip()
         seed_social = seed_footer.get("social") or {}
         if isinstance(seed_social, dict):

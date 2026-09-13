@@ -27,7 +27,9 @@ System libs required (installed via aptfile on Railway NIXPACKS):
 import json
 import os
 import re
+import tempfile
 import time
+from contextlib import contextmanager
 
 import anthropic
 
@@ -73,49 +75,87 @@ def _headline_palette(brand_config=None):
     return emphasis, base
 
 
+def _is_swiss_layout(brand_config):
+    layout = ((brand_config or {}).get("visual_identity") or {}).get("layout") or ""
+    return "swiss" in str(layout).lower() or "poster" in str(layout).lower()
+
+
 def build_slot_prompt(brand_config, platform, draft_text, available_illustrations):
     """Assemble the Claude prompt asking for structured JSON slots.
 
     Claude distills the draft into: a punchy 2-4 line all-caps headline (with
-    per-line emphasis flags coloring some lines Primary Blue vs Dark Navy), a
-    short supporting paragraph, a one-sentence info card, a short CTA, and an
-    illustration id chosen from the available library.
+    per-line emphasis flags coloring some lines Primary vs Dark), supporting
+    copy, an info card, a short CTA, and an illustration id from the library.
+    Swiss-poster brands get tighter copy rules (label, not paragraph).
     """
     vi = brand_config.get("visual_identity") or {}
     display_name = brand_config.get("display_name") or brand_config.get("brand_id")
     typography = vi.get("typography_style") or "geometric sans-serif, bold for headlines"
+    layout = vi.get("layout") or ""
     avoid = vi.get("avoid") or []
     style = (brand_config.get("image_style_prompt") or "").strip()
     style_line = f"BRAND IMAGE STYLE: {style}\n" if style else ""
+    layout_line = f"LAYOUT: {layout}\n" if layout else ""
 
     illustrations_list = ", ".join(available_illustrations) if available_illustrations else "(none available)"
+    swiss = _is_swiss_layout(brand_config)
+
+    if swiss:
+        slot_spec = (
+            "Produce a JSON object with EXACTLY these keys:\n"
+            "  - headline_lines: array of 2-4 short strings, EACH LINE 14 CHARACTERS OR FEWER "
+            "(count spaces). 3-6 words total across the stack, ALL CAPS. One word or two short "
+            "words per line. Hero = stacked statement. Stat = a huge number as line 1 "
+            "(['30K+', 'SENDABLE']). Price = the figure as line 1 (['$19.99'] or ['$65']). "
+            "Do not write credit-union or savings language unless the draft is about that.\n"
+            "  - headline_emphasis: array of booleans, same length as headline_lines. "
+            "true = this line gets the primary accent (orange). false = black. "
+            "Exactly ONE line true. Never emphasize every line. Do not use a second accent "
+            "color. Do not invent photography.\n"
+            "  - supporting_paragraph: one tiny uppercase label, MAX 42 CHARACTERS. "
+            "e.g. 'NASSAU FOOD · SENDABLE'. Not a sentence. No hashtags, no emojis.\n"
+            "  - info_card_text: price, proof, or terms. MAX 60 CHARACTERS. "
+            "e.g. '$19.99 HOT LIST CAMPAIGN' or '38% AVG OPEN RATE'. Not a help-desk offer.\n"
+            "  - cta_text: short uppercase CTA, MAX 28 CHARACTERS. "
+            "e.g. 'BOOK AT KEMIS.EMAIL'. Prefer the brand website over a hashtag.\n"
+            "  - illustration_id: one of the AVAILABLE ILLUSTRATIONS above. "
+            "Those are geometric residues (circle, line, square, triangle, slash, rules, "
+            "arc, tick) — NOT icons, envelopes, chimps, or @ marks. Pick a quiet shape. "
+            "If the list is empty, use the string \"default\".\n"
+        )
+    else:
+        slot_spec = (
+            "Produce a JSON object with EXACTLY these keys:\n"
+            "  - headline_lines: array of 2-4 short strings, EACH LINE 14 CHARACTERS OR FEWER "
+            "(count spaces). Punchy, ALL CAPS, creative line breaks. One word or two short words "
+            "per line. e.g. [\"BUILD\", \"STRONGER\", \"TOGETHER\"] or [\"YOUR FIRST\", \"HOME\", \"STORY\"]. "
+            "Distill the draft's core message into a memorable headline. Do not default to "
+            "savings language unless the draft is actually about saving.\n"
+            "  - headline_emphasis: array of booleans, same length as headline_lines. "
+            "true = this line gets the primary emphasis color; false = the dark/base color. "
+            "Use emphasis on 1-2 lines to create dramatic hierarchy.\n"
+            "  - supporting_paragraph: 1-2 sentences, 120 to 200 characters total. "
+            "Elaborates on the headline. Plain text, no hashtags, no emojis, no bullet points.\n"
+            f"  - info_card_text: one short sentence, max 95 characters, offering help or a next step. "
+            f"e.g. 'Have questions? The {display_name} team is here to help.'\n"
+            "  - cta_text: short question or call to action, MAX 45 CHARACTERS, uppercase. "
+            "e.g. 'WHAT DOES THIS MOMENT LOOK LIKE FOR YOU?'\n"
+            "  - illustration_id: one of the AVAILABLE ILLUSTRATIONS above that best fits the post topic. "
+            "If the list is empty, use the string \"default\".\n"
+        )
 
     return (
-        f"You are Nova, a content designer for premium financial institutions.\n"
+        f"You are Nova, a content designer for {display_name}.\n"
         f"Given a draft social post and a brand, you distill the draft into structured JSON that fits a fixed visual template.\n\n"
         f"BRAND: {display_name}\n"
         f"PLATFORM: {platform}\n"
         f"TYPOGRAPHY STYLE: {typography}\n"
+        f"{layout_line}"
         f"{style_line}"
-        f"AVOID IN COPY: {', '.join(avoid) if avoid else 'hype words, jargon'}\n\n"
+        f"AVOID: {', '.join(avoid) if avoid else 'hype words, jargon'}\n\n"
         f"DRAFT TEXT (the source material to distill, do not reuse verbatim):\n\"\"\"\n{draft_text}\n\"\"\"\n\n"
         f"AVAILABLE ILLUSTRATIONS: {illustrations_list}\n\n"
-        f"Produce a JSON object with EXACTLY these keys:\n"
-        f"  - headline_lines: array of 2-4 short strings, EACH LINE 14 CHARACTERS OR FEWER "
-        f"(count spaces). Punchy, ALL CAPS, creative line breaks. One word or two short words "
-        f"per line. e.g. [\"SAVE\", \"SMARTER\", \"TOGETHER\"] or [\"THEIR FIRST\", \"SAVINGS\", \"STORY\"]. "
-        f"Distill the draft's core message into a memorable headline.\n"
-        f"  - headline_emphasis: array of booleans, same length as headline_lines. "
-        f"true = this line gets the Primary Blue emphasis color; false = this line stays Dark Navy. "
-        f"Use emphasis on 1-2 lines to create dramatic hierarchy.\n"
-        f"  - supporting_paragraph: 1-2 sentences, 120 to 200 characters total. "
-        f"Elaborates on the headline. Plain text, no hashtags, no emojis.\n"
-        f"  - info_card_text: one short sentence, max 95 characters, offering help or a next step. "
-        f"e.g. 'Have questions about savings options at {display_name}? Our team is here to help.'\n"
-        f"  - cta_text: short question or call to action, MAX 45 CHARACTERS, uppercase. "
-        f"e.g. 'WHAT DOES YOUR SAVINGS ROUTINE LOOK LIKE?'\n"
-        f"  - illustration_id: one of the AVAILABLE ILLUSTRATIONS above that best fits the post topic. "
-        f"If the list is empty, use the string \"default\".\n\n"
+        f"{slot_spec}\n"
         f"Return ONLY the JSON object. No code fences, no explanation, no preamble. "
         f"Start with {{ and end with }}."
     )
@@ -139,12 +179,10 @@ def generate_slots(prompt, model=None):
         model=model or DEFAULT_MODEL,
         max_tokens=1200,
         system=(
-            "You are Nova, a content designer for premium financial institutions. "
-            "You distill draft social posts into structured JSON that fits a fixed "
-            "visual template. Headlines are punchy, short, often all-caps, broken "
-            "into 2-4 lines with creative line breaks. You pick the best illustration "
-            "from the available list. You return ONLY a JSON object, no prose, no "
-            "code fences. The JSON must be valid and parseable."
+            "You are Nova, a content designer. You distill draft social posts into "
+            "structured JSON that fits a fixed visual template. Follow the user "
+            "prompt's layout rules exactly. You return ONLY a JSON object, no prose, "
+            "no code fences. The JSON must be valid and parseable."
         ),
         messages=[{"role": "user", "content": prompt}],
     )
@@ -267,20 +305,45 @@ def _lines_to_tspans(lines, x, line_height):
     return "".join(parts)
 
 
-def _fit_headline(headline_lines, max_width=560, max_font=100, min_font=48):
+def _fit_headline(headline_lines, max_width=560, max_font=100, min_font=48,
+                  line_height_ratio=1.14, start_y_base=200, char_advance=0.60):
     """Compute a font size that guarantees the longest headline line fits the
     left column, plus the matching line height and first-baseline Y.
 
-    Bold condensed caps average ~0.60 * font_size per character advance.
-    The headline block starts right below the logo zone (~y 190) and the
-    first baseline sits one cap-height below that.
+    Bold condensed caps average ~0.60 * font_size per character advance
+    (override via design.headline_char_advance for tighter faces).
     """
     longest = max((len(line) for line in headline_lines if line), default=1)
-    fitted = int(max_width / (0.60 * longest))
+    advance = char_advance if char_advance and char_advance > 0 else 0.60
+    fitted = int(max_width / (advance * longest))
     font_size = max(min_font, min(max_font, fitted))
-    line_height = int(font_size * 1.14)
-    start_y = 200 + font_size  # first baseline: block top ~200 + cap height
+    line_height = int(font_size * line_height_ratio)
+    start_y = start_y_base + font_size
     return font_size, line_height, start_y
+
+
+def _design_fit_kwargs(brand_config):
+    """Headline-fit overrides from brand_config.design. Missing keys keep
+    the original BICCU column (560 / 48–100 / 1.14)."""
+    design = (brand_config or {}).get("design") or {}
+
+    def _num(key, default, caster=int):
+        raw = design.get(key)
+        if raw is None or raw == "":
+            return default
+        try:
+            return caster(raw)
+        except (TypeError, ValueError):
+            return default
+
+    return dict(
+        max_width=_num("headline_max_width", 560),
+        max_font=_num("headline_max_font", 100),
+        min_font=_num("headline_min_font", 48),
+        line_height_ratio=_num("headline_line_height_ratio", 1.14, float),
+        start_y_base=_num("headline_start_y_base", 200),
+        char_advance=_num("headline_char_advance", 0.60, float),
+    )
 
 
 def compose_svg(template_str, slots, illustration_svg, footer_data,
@@ -293,6 +356,7 @@ def compose_svg(template_str, slots, illustration_svg, footer_data,
       {{HEADLINE_LINE_1_COLOR}} .. {{HEADLINE_LINE_4}}  fill color (hex)
       {{HEADLINE_FONT_SIZE}} {{HEADLINE_LINE_HEIGHT}} {{HEADLINE_START_Y}}
                                   computed so the longest line always fits
+      {{HEADLINE_TRACKING}}       negative letter-spacing (swiss posters)
       {{SUPPORTING_PARA_TSPANS}}  pre-wrapped tspans for the supporting paragraph
       {{INFO_CARD_TSPANS}}        pre-wrapped tspans for the info card text
       {{CTA_TSPANS}}              single-line tspan for the CTA (truncated)
@@ -308,33 +372,56 @@ def compose_svg(template_str, slots, illustration_svg, footer_data,
     headline_colors = [
         emphasis_hex if emp else base_hex for emp in s["headline_emphasis"]
     ]
+    design = (brand_config or {}).get("design") or {}
 
-    font_size, line_height, start_y = _fit_headline(s["headline_lines"])
+    font_size, line_height, start_y = _fit_headline(
+        s["headline_lines"], **_design_fit_kwargs(brand_config)
+    )
+    tracking = round(-0.04 * font_size, 1)
+
+    supporting_text = s["supporting_paragraph"]
+    if design.get("supporting_uppercase") and supporting_text:
+        supporting_text = supporting_text.upper()
+    supporting_font = int(design.get("supporting_font_size") or 23)
+    supporting_width = int(design.get("supporting_max_width") or 520)
+    supporting_max_lines = int(design.get("supporting_max_lines") or 4)
+    supporting_x = int(design.get("supporting_text_x") or 64)
+    info_x = int(design.get("info_card_text_x") or 150)
+    cta_x = int(design.get("cta_text_x") or 96)
 
     # Pre-wrap the three text zones. Widths match the template's zone widths.
-    supporting_all = _wrap_to_lines(s["supporting_paragraph"], font_size=23, max_width=520)
-    supporting_lines = supporting_all[:4]
-    if len(supporting_all) > 4:
+    supporting_all = _wrap_to_lines(
+        supporting_text, font_size=supporting_font, max_width=supporting_width
+    )
+    supporting_lines = supporting_all[:supporting_max_lines]
+    if len(supporting_all) > supporting_max_lines:
         supporting_lines[-1] = supporting_lines[-1].rstrip(".,;: ") + "…"
     info_all = _wrap_to_lines(s["info_card_text"], font_size=16, max_width=414)
     info_lines = info_all[:3]
     if len(info_all) > 3:
         info_lines[-1] = info_lines[-1].rstrip(".,;: ") + "…"
 
-    # Anchor the supporting paragraph bottom-up just above the info card
-    # (top at y=806) so the gap stays constant however many lines wrap.
-    supporting_y = 800 - 33 * len(supporting_lines)
+    supporting_lh = 22 if supporting_font <= 16 else 33
+    if str(design.get("supporting_anchor") or "") == "below_headline":
+        n_hl = sum(1 for line in s["headline_lines"] if line) or 1
+        gap = int(design.get("supporting_gap") or 36)
+        supporting_y = start_y + line_height * (n_hl - 1) + gap
+    else:
+        # Anchor bottom-up just above the info card (top at y=806) so the
+        # gap stays constant however many lines wrap. BICCU/KGC default.
+        supporting_y = 800 - supporting_lh * len(supporting_lines)
 
-    # CTA is a single line on a fixed-width navy bar; truncate with an
-    # ellipsis rather than wrapping (the bar cannot grow). Font size is
-    # fitted so the text always clears the arrow at x=556 (zone 96..540).
+    # CTA is a single line; truncate with an ellipsis rather than wrapping.
     cta_text = s["cta_text"].upper()
     if len(cta_text) > 46:
         cta_text = cta_text[:45].rstrip() + "…"
     cta_lines = [cta_text]
-    # width ≈ len * (0.64*font + 0.8 letter-spacing); solve for font, cap 17.
-    cta_font = min(17, int((440 / max(len(cta_text), 1) - 0.8) / 0.64)) if cta_text else 17
-    cta_font = max(13, cta_font)
+    cta_max = int(design.get("cta_max_font") or 17)
+    cta_min = int(design.get("cta_min_font") or 13)
+    cta_zone = int(design.get("cta_max_width") or 440)
+    # width ≈ len * (0.64*font + 0.8 letter-spacing); solve for font.
+    cta_font = min(cta_max, int((cta_zone / max(len(cta_text), 1) - 0.8) / 0.64)) if cta_text else cta_max
+    cta_font = max(cta_min, cta_font)
 
     replacements = {
         "{{HEADLINE_LINE_1}}": _escape_xml(s["headline_lines"][0]),
@@ -348,11 +435,14 @@ def compose_svg(template_str, slots, illustration_svg, footer_data,
         "{{HEADLINE_FONT_SIZE}}": str(font_size),
         "{{HEADLINE_LINE_HEIGHT}}": str(line_height),
         "{{HEADLINE_START_Y}}": str(start_y),
+        "{{HEADLINE_TRACKING}}": str(tracking),
         "{{SUPPORTING_PARA_Y}}": str(supporting_y),
         "{{CTA_FONT_SIZE}}": str(cta_font),
-        "{{SUPPORTING_PARA_TSPANS}}": _lines_to_tspans(supporting_lines, x=64, line_height=33),
-        "{{INFO_CARD_TSPANS}}": _lines_to_tspans(info_lines, x=150, line_height=21),
-        "{{CTA_TSPANS}}": _lines_to_tspans(cta_lines, x=96, line_height=18),
+        "{{SUPPORTING_PARA_TSPANS}}": _lines_to_tspans(
+            supporting_lines, x=supporting_x, line_height=supporting_lh
+        ),
+        "{{INFO_CARD_TSPANS}}": _lines_to_tspans(info_lines, x=info_x, line_height=21),
+        "{{CTA_TSPANS}}": _lines_to_tspans(cta_lines, x=cta_x, line_height=18),
         "{{ILLUSTRATION_SVG}}": illustration_svg or "",
         "{{FOOTER_WEBSITE}}": _escape_xml(footer_data.get("website", "")),
         "{{FOOTER_PHONE}}": _escape_xml(footer_data.get("phone", "")),
@@ -366,15 +456,62 @@ def compose_svg(template_str, slots, illustration_svg, footer_data,
     return out
 
 
-def rasterize_svg(svg_str, output_width=CANVAS_SIZE, output_height=CANVAS_SIZE):
+@contextmanager
+def _fontconfig_for_dir(font_dir):
+    """Point fontconfig at a brand fonts/ dir for the duration of rasterize.
+
+    cairosvg/Pango will not see TTF files sitting next to the template unless
+    fontconfig lists that directory. We prepend the brand dir and still
+    include the system conf so Arial/DejaVu keep working for other brands.
+    """
+    if not font_dir or not os.path.isdir(font_dir):
+        yield
+        return
+    conf = (
+        '<?xml version="1.0"?>\n'
+        '<!DOCTYPE fontconfig SYSTEM "fonts.dtd">\n'
+        "<fontconfig>\n"
+        f"  <dir>{font_dir}</dir>\n"
+        '  <include ignore_missing="yes">/etc/fonts/fonts.conf</include>\n'
+        '  <include ignore_missing="yes">/opt/homebrew/etc/fonts/fonts.conf</include>\n'
+        '  <include ignore_missing="yes">/usr/local/etc/fonts/fonts.conf</include>\n'
+        "</fontconfig>\n"
+    )
+    old = os.environ.get("FONTCONFIG_FILE")
+    fd, path = tempfile.mkstemp(prefix="nova-fonts-", suffix=".conf")
+    try:
+        os.write(fd, conf.encode("utf-8"))
+        os.close(fd)
+        fd = None
+        os.environ["FONTCONFIG_FILE"] = path
+        yield
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if old is None:
+            os.environ.pop("FONTCONFIG_FILE", None)
+        else:
+            os.environ["FONTCONFIG_FILE"] = old
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def rasterize_svg(svg_str, output_width=CANVAS_SIZE, output_height=CANVAS_SIZE,
+                  font_dir=None):
     """Convert SVG markup to PNG bytes via cairosvg. Raises on parse/render errors."""
     import cairosvg
 
-    return cairosvg.svg2png(
-        bytestring=svg_str.encode("utf-8"),
-        output_width=output_width,
-        output_height=output_height,
-    )
+    with _fontconfig_for_dir(font_dir):
+        return cairosvg.svg2png(
+            bytestring=svg_str.encode("utf-8"),
+            output_width=output_width,
+            output_height=output_height,
+        )
 
 
 def save_image(image_bytes, brand_id, item_id):
@@ -459,6 +596,7 @@ def generate_and_save(brand_config, platform, draft_text, item_id, model=None):
         template_str, slots, illustration_svg, footer_data,
         brand_config=brand_config,
     )
-    png_bytes = rasterize_svg(final_svg)
+    font_dir = design_loader.get_fonts_dir(brand_id, brand_config)
+    png_bytes = rasterize_svg(final_svg, font_dir=font_dir)
     url = save_image(png_bytes, brand_id, item_id)
     return url, prompt, model_used

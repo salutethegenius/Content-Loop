@@ -40,7 +40,21 @@ def get_design_config(brand_config):
     design.setdefault("template", "template.svg")
     design.setdefault("illustrations_dir", "illustrations")
     design.setdefault("default_illustration", None)
+    design.setdefault("fonts_dir", "fonts")
     return design
+
+
+def get_fonts_dir(brand_id, brand_config=None):
+    """Return the brand's fonts directory if it exists, else None.
+
+    Used so cairosvg/Pango can load Barlow Condensed / DM Sans (or any
+    per-brand face) at rasterize time without installing system packages.
+    """
+    design = get_design_config(brand_config or {})
+    path = _resolve_inside_brand(brand_id, design.get("fonts_dir") or "fonts")
+    if path and os.path.isdir(path):
+        return path
+    return None
 
 
 def load_template(brand_id, brand_config=None):

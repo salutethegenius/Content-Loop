@@ -1,0 +1,6 @@
+<g>
+  <!-- Third-accent ticks only: small squares, not an icon. -->
+  <rect x="96" y="96" width="28" height="28" fill="#6200FF"/>
+  <rect x="140" y="96" width="28" height="28" fill="#FF4500" opacity="0.5"/>
+  <rect x="184" y="96" width="28" height="28" fill="#0047FF" opacity="0.3"/>
+</g>
