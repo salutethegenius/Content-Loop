@@ -32,5 +32,23 @@
     "template": "template.svg",
     "illustrations_dir": "illustrations",
     "default_illustration": "growth_arrow"
-  }
+  },
+  "content_pillars": [
+    {
+      "pillar": "Sovereign digital infrastructure",
+      "description": "The group's stance on building and owning infrastructure that lasts. Calm authority, no hype."
+    },
+    {
+      "pillar": "Stewardship and long horizons",
+      "description": "Patient capital, disciplined growth, local roots. Say less, mean more."
+    },
+    {
+      "pillar": "The Kemis companies",
+      "description": "How the group companies serve Bahamian institutions. Do not invent products or partnerships."
+    },
+    {
+      "pillar": "Structure and capital",
+      "description": "Clarity about how the group is built. Weight-bearing nouns. No slogans."
+    }
+  ]
 }

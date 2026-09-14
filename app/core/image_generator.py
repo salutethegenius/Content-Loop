@@ -21,15 +21,17 @@ The same generate_and_save() interface is preserved so
 slack_interactions._handle_generate_image is unchanged.
 
 System libs required (installed via aptfile on Railway NIXPACKS):
-  libcairo2, libpango-1.0-0, libpangocairo-1.0-0, libgdk-pixbuf2.0-0, libffi-dev
+  libcairo2, libpango-1.0-0, libpangocairo-1.0-0, libgdk-pixbuf2.0-0, libffi-dev,
+  fonts-dejavu-core, fonts-liberation
 """
 
 import json
 import os
 import re
+import subprocess
+import sys
 import tempfile
 import time
-from contextlib import contextmanager
 
 import anthropic
 
@@ -76,8 +78,17 @@ def _headline_palette(brand_config=None):
 
 
 def _is_swiss_layout(brand_config):
+    """True only for Swiss-poster brands (KemisEMAIL), never BICCU/KGC.
+
+    `poster` alone is too broad: onboarded layout strings often say
+    "poster-like" and would steal KemisEMAIL slot rules (tiny labels,
+    BOOK AT KEMIS.EMAIL, geometry residues).
+    """
+    design = (brand_config or {}).get("design") or {}
+    if str(design.get("layout_system") or "").strip().lower() == "swiss":
+        return True
     layout = ((brand_config or {}).get("visual_identity") or {}).get("layout") or ""
-    return "swiss" in str(layout).lower() or "poster" in str(layout).lower()
+    return "swiss" in str(layout).lower()
 
 
 def build_slot_prompt(brand_config, platform, draft_text, available_illustrations):
@@ -456,62 +467,104 @@ def compose_svg(template_str, slots, illustration_svg, footer_data,
     return out
 
 
-@contextmanager
-def _fontconfig_for_dir(font_dir):
-    """Point fontconfig at a brand fonts/ dir for the duration of rasterize.
+_RASTER_WORKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rasterize_worker.py")
 
-    cairosvg/Pango will not see TTF files sitting next to the template unless
-    fontconfig lists that directory. We prepend the brand dir and still
-    include the system conf so Arial/DejaVu keep working for other brands.
+
+def _fontconfig_xml(font_dir=None):
+    """Fontconfig that optionally adds one brand fonts/ dir.
+
+    Arial/Helvetica are pinned to DejaVu/Liberation so a brand dir that
+    contains Barlow Condensed cannot steal BICCU/KGC weight-800 headlines.
     """
-    if not font_dir or not os.path.isdir(font_dir):
-        yield
-        return
-    conf = (
+    extra = ""
+    if font_dir and os.path.isdir(font_dir):
+        extra = f"  <dir>{font_dir}</dir>\n"
+    return (
         '<?xml version="1.0"?>\n'
         '<!DOCTYPE fontconfig SYSTEM "fonts.dtd">\n'
         "<fontconfig>\n"
-        f"  <dir>{font_dir}</dir>\n"
+        f"{extra}"
         '  <include ignore_missing="yes">/etc/fonts/fonts.conf</include>\n'
         '  <include ignore_missing="yes">/opt/homebrew/etc/fonts/fonts.conf</include>\n'
         '  <include ignore_missing="yes">/usr/local/etc/fonts/fonts.conf</include>\n'
+        '  <match target="pattern">\n'
+        '    <test name="family"><string>Arial</string></test>\n'
+        '    <edit name="family" mode="assign" binding="strong">'
+        "<string>DejaVu Sans</string></edit>\n"
+        "  </match>\n"
+        '  <match target="pattern">\n'
+        '    <test name="family"><string>Helvetica</string></test>\n'
+        '    <edit name="family" mode="assign" binding="strong">'
+        "<string>DejaVu Sans</string></edit>\n"
+        "  </match>\n"
+        '  <match target="pattern">\n'
+        '    <test name="family"><string>Arial Narrow</string></test>\n'
+        '    <edit name="family" mode="assign" binding="strong">'
+        "<string>DejaVu Sans</string></edit>\n"
+        "  </match>\n"
+        '  <alias binding="strong">\n'
+        "    <family>sans-serif</family>\n"
+        "    <prefer>\n"
+        "      <family>DejaVu Sans</family>\n"
+        "      <family>Liberation Sans</family>\n"
+        "      <family>Nimbus Sans L</family>\n"
+        "      <family>FreeSans</family>\n"
+        "      <family>Helvetica</family>\n"
+        "    </prefer>\n"
+        "  </alias>\n"
         "</fontconfig>\n"
     )
-    old = os.environ.get("FONTCONFIG_FILE")
-    fd, path = tempfile.mkstemp(prefix="nova-fonts-", suffix=".conf")
+
+
+def rasterize_svg(svg_str, output_width=CANVAS_SIZE, output_height=CANVAS_SIZE,
+                  font_dir=None):
+    """Convert SVG markup to PNG bytes via cairosvg in a child process.
+
+    Fontconfig initializes once per process. A parent worker that first
+    rasterizes KemisEMAIL (Barlow) then BICCU (Arial, missing on Railway)
+    will match Barlow ExtraBold for weight 800. Isolating each rasterize
+    in a fresh interpreter keeps Barlow out of BICCU/KGC.
+    """
+    fd, conf_path = tempfile.mkstemp(prefix="nova-fonts-", suffix=".conf")
     try:
-        os.write(fd, conf.encode("utf-8"))
+        os.write(fd, _fontconfig_xml(font_dir).encode("utf-8"))
         os.close(fd)
         fd = None
-        os.environ["FONTCONFIG_FILE"] = path
-        yield
+        env = os.environ.copy()
+        env["FONTCONFIG_FILE"] = conf_path
+        # Stop the child inheriting a parent cairo init; FONTCONFIG_FILE is
+        # the only signal the worker needs.
+        payload = json.dumps({
+            "svg": svg_str,
+            "w": output_width,
+            "h": output_height,
+        }).encode("utf-8")
+        proc = subprocess.run(
+            [sys.executable, _RASTER_WORKER],
+            input=payload,
+            env=env,
+            capture_output=True,
+            timeout=45,
+        )
+        if proc.returncode != 0:
+            err = (proc.stderr or b"").decode("utf-8", "replace").strip()
+            raise RuntimeError(
+                f"rasterize_worker exited {proc.returncode}: {err or 'no stderr'}"
+            )
+        if not proc.stdout:
+            err = (proc.stderr or b"").decode("utf-8", "replace").strip()
+            raise RuntimeError(f"rasterize_worker produced no PNG: {err}")
+        return proc.stdout
     finally:
         if fd is not None:
             try:
                 os.close(fd)
             except OSError:
                 pass
-        if old is None:
-            os.environ.pop("FONTCONFIG_FILE", None)
-        else:
-            os.environ["FONTCONFIG_FILE"] = old
         try:
-            os.remove(path)
+            os.remove(conf_path)
         except OSError:
             pass
-
-
-def rasterize_svg(svg_str, output_width=CANVAS_SIZE, output_height=CANVAS_SIZE,
-                  font_dir=None):
-    """Convert SVG markup to PNG bytes via cairosvg. Raises on parse/render errors."""
-    import cairosvg
-
-    with _fontconfig_for_dir(font_dir):
-        return cairosvg.svg2png(
-            bytestring=svg_str.encode("utf-8"),
-            output_width=output_width,
-            output_height=output_height,
-        )
 
 
 def save_image(image_bytes, brand_id, item_id):
@@ -597,6 +650,11 @@ def generate_and_save(brand_config, platform, draft_text, item_id, model=None):
         brand_config=brand_config,
     )
     font_dir = design_loader.get_fonts_dir(brand_id, brand_config)
+    print(
+        f"[image_generator] compose brand={brand_id} "
+        f"swiss={_is_swiss_layout(brand_config)} font_dir={bool(font_dir)}",
+        file=sys.stderr,
+    )
     png_bytes = rasterize_svg(final_svg, font_dir=font_dir)
     url = save_image(png_bytes, brand_id, item_id)
     return url, prompt, model_used

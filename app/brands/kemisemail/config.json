@@ -73,6 +73,7 @@
     "template": "template.svg",
     "illustrations_dir": "illustrations",
     "default_illustration": "circle",
+    "layout_system": "swiss",
     "fonts_dir": "fonts",
     "headline_max_width": 640,
     "headline_max_font": 128,
