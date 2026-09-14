@@ -42,8 +42,11 @@ def try_with_loop_lock(fn):
         lock_conn.close()
 
 
-def generate_for_platforms(brand, platforms):
+def generate_for_platforms(brand, platforms, topic=None):
     """Generate drafts for one brand on the given platforms.
+
+    `topic` is an optional operator-supplied brief. When omitted, the
+    generator picks a pillar from memory and avoids recent wording.
 
     Skips platforms not in the brand config. Returns a list of result dicts.
     A failure on one platform (Claude error, Slack error, DB error, etc.) is
@@ -57,7 +60,7 @@ def generate_for_platforms(brand, platforms):
             continue
         item_id = None
         try:
-            draft_text = generate_draft(brand, platform)
+            draft_text = generate_draft(brand, platform, topic=topic)
             item_id = save_draft(brand["brand_id"], platform, draft_text)
             ts = post_for_approval(
                 item_id, brand["display_name"], platform, draft_text

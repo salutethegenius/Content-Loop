@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1080" width="1080" height="1080" font-family="'Arial', 'Helvetica', sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1080" width="1080" height="1080" font-family="'Arial', 'Helvetica', 'DejaVu Sans', 'Liberation Sans', sans-serif">
   <!-- ============================================================
        BICCU design system template (V1.7.1)
        1080x1080 social graphic. Fixed layout, swap-in slots.
@@ -79,7 +79,7 @@
   <!-- ===================== SUPPORTING PARAGRAPH =====================
        Pre-wrapped into tspans by compose_svg (max 4 lines, 23px, lh 33).
        Y flows from the headline block bottom so there is no dead gap. -->
-  <text x="64" y="{{SUPPORTING_PARA_Y}}" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="400" fill="#003C71">
+  <text x="64" y="{{SUPPORTING_PARA_Y}}" font-family="Arial, Helvetica, 'DejaVu Sans', 'Liberation Sans', sans-serif" font-size="23" font-weight="400" fill="#003C71">
     {{SUPPORTING_PARA_TSPANS}}
   </text>
 
@@ -88,7 +88,7 @@
     <rect x="64" y="806" width="520" height="92" rx="16" ry="16" fill="#FFFFFF"/>
     <circle cx="110" cy="852" r="23" fill="#F47A20"/>
     <path d="M100 846 Q100 836 110 836 Q120 836 120 846 Q120 856 110 856 L104 861 L106.5 856 Q100 856 100 846 Z" fill="#FFFFFF"/>
-    <text x="150" y="844" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="500" fill="#003C71">
+    <text x="150" y="844" font-family="Arial, Helvetica, 'DejaVu Sans', 'Liberation Sans', sans-serif" font-size="16" font-weight="500" fill="#003C71">
       {{INFO_CARD_TSPANS}}
     </text>
   </g>
@@ -98,7 +98,7 @@
     <path d="M0 926 L596 926 Q624 926 624 954 Q624 982 596 982 L0 982 Z" fill="#003C71"/>
     <circle cx="58" cy="954" r="21" fill="#FFFFFF"/>
     <path d="M49 949 Q49 940 58 940 Q67 940 67 949 Q67 958 58 958 L53 962 L55 958 Q49 958 49 949 Z" fill="#003C71"/>
-    <text x="96" y="960" font-family="Arial, Helvetica, sans-serif" font-size="{{CTA_FONT_SIZE}}" font-weight="700" fill="#FFFFFF" letter-spacing="0.8">
+    <text x="96" y="960" font-family="Arial, Helvetica, 'DejaVu Sans', 'Liberation Sans', sans-serif" font-size="{{CTA_FONT_SIZE}}" font-weight="700" fill="#FFFFFF" letter-spacing="0.8">
       {{CTA_TSPANS}}
     </text>
     <path d="M556 954 L584 954 M574 944 L584 954 L574 964" stroke="#47B8E8" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>

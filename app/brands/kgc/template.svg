@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1080" width="1080" height="1080" font-family="'Arial', 'Helvetica', sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1080" width="1080" height="1080" font-family="'Arial', 'Helvetica', 'DejaVu Sans', 'Liberation Sans', sans-serif">
   <!-- ============================================================
        KGC sovereign hero template (de-BICCU)
        Full navy canvas, gold accents, site-style gold CTA button.
@@ -46,7 +46,7 @@
   </g>
 
   <!-- ===================== SUPPORTING PARAGRAPH ===================== -->
-  <text x="64" y="{{SUPPORTING_PARA_Y}}" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="400" fill="#F7F4EC" opacity="0.88">
+  <text x="64" y="{{SUPPORTING_PARA_Y}}" font-family="Arial, Helvetica, 'DejaVu Sans', 'Liberation Sans', sans-serif" font-size="22" font-weight="400" fill="#F7F4EC" opacity="0.88">
     {{SUPPORTING_PARA_TSPANS}}
   </text>
 
@@ -57,7 +57,7 @@
     <!-- gold diamond marker fills the left gutter (text injects at x=150) -->
     <rect x="96" y="840" width="24" height="24" fill="none" stroke="#C4A35A" stroke-width="1.5" transform="rotate(45 108 852)"/>
     <circle cx="108" cy="852" r="4" fill="#C4A35A"/>
-    <text x="150" y="844" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="500" fill="#F7F4EC">
+    <text x="150" y="844" font-family="Arial, Helvetica, 'DejaVu Sans', 'Liberation Sans', sans-serif" font-size="16" font-weight="500" fill="#F7F4EC">
       {{INFO_CARD_TSPANS}}
     </text>
   </g>
@@ -66,7 +66,7 @@
   <!-- ===================== GOLD CTA BUTTON (site-style) ===================== -->
   <g id="cta">
     <rect x="64" y="920" width="490" height="56" rx="4" ry="4" fill="#C4A35A"/>
-    <text x="96" y="954" font-family="Arial, Helvetica, sans-serif" font-size="{{CTA_FONT_SIZE}}" font-weight="700" fill="#0B1D36" letter-spacing="1.2">
+    <text x="96" y="954" font-family="Arial, Helvetica, 'DejaVu Sans', 'Liberation Sans', sans-serif" font-size="{{CTA_FONT_SIZE}}" font-weight="700" fill="#0B1D36" letter-spacing="1.2">
       {{CTA_TSPANS}}
     </text>
   </g>

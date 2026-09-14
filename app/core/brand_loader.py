@@ -12,6 +12,7 @@ _SEED_FILL_KEYS = (
     "meta_page_id",
     "meta_token_env",
     "design",
+    "content_pillars",
 )
 
 
@@ -37,9 +38,10 @@ def _merge_seed_fill(config):
     merged = dict(config)
     for key in _SEED_FILL_KEYS:
         current = merged.get(key)
-        empty = current is None or current == "" or current == {}
-        if empty and seed.get(key) not in (None, "", {}):
-            merged[key] = seed[key]
+        empty = current is None or current == "" or current == {} or current == []
+        seed_val = seed.get(key)
+        if empty and seed_val not in (None, "", {}, []):
+            merged[key] = seed_val
 
     # Design-system seeds own template fit params. Onboarding emits a stub
     # `design` dict (so the empty-dict fill above never fires); overlay

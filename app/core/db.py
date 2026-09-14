@@ -269,6 +269,171 @@ def get_last_activity(brand_id):
         conn.close()
 
 
+def list_recent_drafts(brand_id, platform, limit=6):
+    """Return recent draft_text values for a brand/platform, newest first.
+
+    Used so generation can avoid repeating wording. Excludes empty/error rows.
+    """
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT draft_text
+                  FROM content_items
+                 WHERE brand = %s
+                   AND platform = %s
+                   AND draft_text IS NOT NULL
+                   AND btrim(draft_text) != ''
+                   AND status != 'error'
+                 ORDER BY created_at DESC, id DESC
+                 LIMIT %s
+                """,
+                (brand_id, platform, limit),
+            )
+            return [r[0] for r in cur.fetchall() if r and r[0]]
+    finally:
+        conn.close()
+
+
+def count_drafts(brand_id, platform):
+    """How many non-error drafts exist for this brand/platform.
+
+    Drives pillar rotation so each generation advances instead of hashing
+    the calendar date (which reused the same topic all day).
+    """
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT count(*)
+                  FROM content_items
+                 WHERE brand = %s
+                   AND platform = %s
+                   AND status != 'error'
+                """,
+                (brand_id, platform),
+            )
+            row = cur.fetchone()
+            return int(row[0] or 0) if row else 0
+    finally:
+        conn.close()
+
+
+_GENERATION_PENDING_DDL = """
+CREATE TABLE IF NOT EXISTS generation_pending (
+    thread_ts TEXT PRIMARY KEY,
+    brand_id TEXT NOT NULL,
+    platforms TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT now()
+)
+"""
+
+
+_pending_ready = False
+
+
+def _ensure_generation_pending():
+    """Create generation_pending if this deploy hasn't run schema.sql yet."""
+    global _pending_ready
+    if _pending_ready:
+        return
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(_GENERATION_PENDING_DDL)
+        conn.commit()
+        _pending_ready = True
+    finally:
+        conn.close()
+
+
+def upsert_generation_pending(thread_ts, brand_id, platforms, channel):
+    """Remember that this Slack thread is waiting for a custom topic reply."""
+    _ensure_generation_pending()
+    platforms_str = ",".join(platforms) if isinstance(platforms, (list, tuple)) else str(platforms)
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO generation_pending (thread_ts, brand_id, platforms, channel)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (thread_ts) DO UPDATE
+                   SET brand_id = EXCLUDED.brand_id,
+                       platforms = EXCLUDED.platforms,
+                       channel = EXCLUDED.channel,
+                       created_at = now()
+                """,
+                (thread_ts, brand_id, platforms_str, channel),
+            )
+            conn.commit()
+    finally:
+        conn.close()
+
+
+def claim_generation_pending(thread_ts):
+    """Atomically take the pending topic request for this thread, or None.
+
+    DELETE ... RETURNING so a Slack event retry cannot generate twice.
+    A missing table means nothing is waiting.
+    """
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            try:
+                cur.execute(
+                    """
+                    DELETE FROM generation_pending
+                     WHERE thread_ts = %s
+                 RETURNING brand_id, platforms, channel
+                    """,
+                    (thread_ts,),
+                )
+            except psycopg2.Error as exc:
+                if getattr(exc, "pgcode", None) == "42P01":
+                    conn.rollback()
+                    return None
+                raise
+            row = cur.fetchone()
+            conn.commit()
+            if not row:
+                return None
+            platforms = [p.strip() for p in (row[1] or "").split(",") if p.strip()]
+            return {
+                "brand_id": row[0],
+                "platforms": platforms,
+                "channel": row[2] or "",
+                "thread_ts": thread_ts,
+            }
+    finally:
+        conn.close()
+
+
+def clear_generation_pending(thread_ts):
+    """Drop a pending topic wait (e.g. operator picked generic instead)."""
+    if not thread_ts:
+        return
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            try:
+                cur.execute(
+                    "DELETE FROM generation_pending WHERE thread_ts = %s",
+                    (thread_ts,),
+                )
+            except psycopg2.Error as exc:
+                if getattr(exc, "pgcode", None) == "42P01":
+                    conn.rollback()
+                    return
+                raise
+            conn.commit()
+    finally:
+        conn.close()
+
+
 def has_pending_backlog(brand_id):
     """True if the brand has drafts still waiting for approval."""
     conn = get_conn()
